@@ -1,0 +1,3 @@
+/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/triangle_renderer.dir
+/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/edit_cache.dir
+/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/rebuild_cache.dir

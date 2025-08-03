@@ -1,0 +1,1 @@
+/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a

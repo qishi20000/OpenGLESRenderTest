@@ -1,0 +1,27 @@
+{
+  "buildFiles": [
+    "/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/src/main/cpp/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/Users/qishi20000/Library/Android/sdk/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/Users/qishi20000/Library/Android/sdk/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "triangle_renderer::@6890427a1f51a3e7e1df": {
+      "artifactName": "triangle_renderer",
+      "abi": "arm64-v8a",
+      "output": "/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a/libtriangle_renderer.so",
+      "runtimeFiles": []
+    }
+  }
+}
