@@ -24,7 +24,7 @@ static const char* fragmentShaderCode =
 
 static GLuint program = 0;
 static GLint positionHandle = 0;
-
+GLuint vbo = 0;
 // Load shader helper function
 static GLuint loadShader(GLenum type, const char* shaderCode) {
     GLuint shader = glCreateShader(type);
@@ -56,7 +56,8 @@ static void createProgram() {
         glDeleteProgram(program);
         program = 0;
     }
-    
+    GLint maxVertexAttribs;
+    glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &maxVertexAttribs);
     GLuint vertexShader = loadShader(GL_VERTEX_SHADER, vertexShaderCode);
     if (!vertexShader) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "Failed to load vertex shader");
@@ -133,14 +134,21 @@ extern "C" {
         if (program) {
             glUseProgram(program);
             glEnableVertexAttribArray(positionHandle);
-
             static const GLfloat triangleCoords[] = {
                     0.0f,  0.5f, 0.0f,  // top
                     -0.5f, -0.5f, 0.0f,  // bottom left
                     0.5f, -0.5f, 0.0f   // bottom right
             };
+            if(vbo == 0)
+            {
+                glGenBuffers(1,&vbo);
+                glBindBuffer(GL_ARRAY_BUFFER,vbo);
+                glBufferData(GL_ARRAY_BUFFER,3*3*sizeof(GLfloat),triangleCoords,GL_STATIC_DRAW);
+            }
 
-            glVertexAttribPointer(positionHandle, 3, GL_FLOAT, GL_FALSE, 0, triangleCoords);
+
+            glBindBuffer(GL_ARRAY_BUFFER,vbo);
+            glVertexAttribPointer(positionHandle, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glDisableVertexAttribArray(positionHandle);
         }
