@@ -202,7 +202,7 @@ extern "C" {
     JNIEXPORT void JNICALL
     Java_com_example_openglestriangle_TriangleRenderer_surfaceChanged(JNIEnv *env, jclass clazz, jint width, jint height) {
         __android_log_print(ANDROID_LOG_INFO, TAG, "Surface changed: %d x %d", width, height);
-        glViewport(0, 0, width, height);
+        glViewport(0, 500, width, width);
     }
 
     JNIEXPORT void JNICALL
