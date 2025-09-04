@@ -8,29 +8,31 @@
 static const char* TAG = "OpenGLESTriangle";
 
 // Shader sources
-static const char* vertexShaderCode =
-        "#version 300 es\n"
-        "layout(location = 0) in vec3 aPosition;\n"
-        "out vec3 vNormal;\n"
-        "void main() {\n"
-        "  vNormal = normalize(aPosition);\n"
-        "  gl_Position = vec4(aPosition, 1.0);\n"
-        "}\n";
+static const char* vertexShaderCode = R"(
+        #version 300 es
+        layout(location = 0) in vec3 aPosition;
+        out vec3 vNormal;
+        void main() {
+          vNormal = normalize(aPosition);
+          gl_Position = vec4(aPosition, 1.0);
+        }
+        )";
 
-static const char* fragmentShaderCode =
-        "#version 300 es\n"
-        "precision mediump float;\n"
-        "in vec3 vNormal;\n"
-        "uniform vec3 uLightDir;\n"
-        "out vec4 fragColor;\n"
-        "void main() {\n"
-        "  vec3 n = normalize(vNormal);\n"
-        "  vec3 l = normalize(uLightDir);\n"
-        "  float diff = max(dot(n, l), 0.0);\n"
-        "  vec3 base = vec3(0.8, 0.8, 0.8);\n"
-        "  vec3 color = base * (0.2 + 0.8 * diff);\n"
-        "  fragColor = vec4(color, 1.0);\n"
-        "}\n";
+static const char* fragmentShaderCode = R"(
+        #version 300 es
+        precision mediump float;
+        in vec3 vNormal;
+        uniform vec3 uLightDir;
+        out vec4 fragColor;
+        void main() {
+          vec3 n = normalize(vNormal);
+          vec3 l = normalize(uLightDir);
+          float diff = max(dot(n, l), 0.0);
+          vec3 base = vec3(0.8, 0.8, 0.8);
+          vec3 color = base * (0.2 + 0.8 * diff);
+          fragColor = vec4(color, 1.0);
+        }
+        )";
 
 static GLuint program = 0;
 static GLint positionHandle = 0;
