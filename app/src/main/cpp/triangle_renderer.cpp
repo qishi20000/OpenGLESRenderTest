@@ -12,8 +12,10 @@ static const char* vertexShaderCode = R"(
         #version 300 es
         layout(location = 0) in vec3 aPosition;
         out vec3 vNormal;
+        out vec3 vWorldPos;
         void main() {
           vNormal = normalize(aPosition);
+          vWorldPos = aPosition;
           gl_Position = vec4(aPosition, 1.0);
         }
         )";
@@ -22,14 +24,96 @@ static const char* fragmentShaderCode = R"(
         #version 300 es
         precision mediump float;
         in vec3 vNormal;
-        uniform vec3 uLightDir;
+        in vec3 vWorldPos;
+        
+        // Directional light
+        uniform vec3 uLightDir;           // light direction (towards light)
+        uniform vec3 uLightColor;         // light color (RGB)
+        uniform float uLightIntensity;    // scalar intensity
+        
+        // Camera
+        uniform vec3 uCameraPos;          // camera position in world space
+        
+        // PBR material params
+        uniform vec3 uBaseColor;          // base color / albedo
+        uniform float uMetallic;          // [0,1]
+        uniform float uRoughness;         // [0.04,1]
+        uniform float uAmbientOcclusion;  // [0,1]
+        
+        // Clearcoat (second specular lobe similar to Filament)
+        uniform float uClearcoat;         // [0,1]
+        uniform float uClearcoatRoughness;// [0,1]
+        
         out vec4 fragColor;
+        
+        // Schlick Fresnel approximation
+        vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+          return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+        }
+        
+        float distributionGGX(float NdotH, float alpha) {
+          float a2 = alpha * alpha;
+          float denom = (NdotH * NdotH) * (a2 - 1.0) + 1.0;
+          return a2 / (3.14159265 * denom * denom);
+        }
+        
+        float geometrySmithGGX(float NdotV, float NdotL, float alpha) {
+          // Schlick-GGX masking-shadowing approximation
+          float k = (alpha + 1.0);
+          k = (k * k) / 8.0;
+          float gV = NdotV / (NdotV * (1.0 - k) + k);
+          float gL = NdotL / (NdotL * (1.0 - k) + k);
+          return gV * gL;
+        }
+        
         void main() {
-          vec3 n = normalize(vNormal);
-          vec3 l = normalize(uLightDir);
-          float diff = max(dot(n, l), 0.0);
-          vec3 base = vec3(0.8, 0.8, 0.8);
-          vec3 color = base * (0.2 + 0.8 * diff);
+          // Normal, Light, View, Half
+          vec3 N = normalize(vNormal);
+          vec3 L = normalize(uLightDir);
+          vec3 V = normalize(uCameraPos - vWorldPos);
+          vec3 H = normalize(V + L);
+          
+          float NdotL = max(dot(N, L), 0.0);
+          float NdotV = max(dot(N, V), 1e-4);
+          float NdotH = max(dot(N, H), 0.0);
+          float VdotH = max(dot(V, H), 0.0);
+          
+          // Base reflectance F0
+          vec3 dielectricF0 = vec3(0.04);
+          vec3 F0 = mix(dielectricF0, uBaseColor, uMetallic);
+          
+          float alpha = max(uRoughness * uRoughness, 1e-4);
+          
+          // Cook-Torrance BRDF
+          float D = distributionGGX(NdotH, alpha);
+          float G = geometrySmithGGX(NdotV, NdotL, alpha);
+          vec3  F = fresnelSchlick(VdotH, F0);
+          
+          vec3 numerator = D * G * F;
+          float denom = 4.0 * NdotV * NdotL + 1e-4;
+          vec3 specular = numerator / denom;
+          
+          // Energy-conserving diffuse term
+          vec3 kS = F;                      // specular amount
+          vec3 kD = (vec3(1.0) - kS) * (1.0 - uMetallic);
+          vec3 diffuse = kD * uBaseColor / 3.14159265;
+          
+          // Clearcoat lobe (thin dielectric layer)
+          float ccAlpha = max(uClearcoatRoughness * uClearcoatRoughness, 1e-4);
+          float Dcc = distributionGGX(NdotH, ccAlpha);
+          float Gcc = geometrySmithGGX(NdotV, NdotL, ccAlpha);
+          float Fcc = fresnelSchlick(VdotH, vec3(0.04)).r; // scalar F for clearcoat
+          float ccDenom = 4.0 * NdotV * NdotL + 1e-4;
+          float clearcoatSpec = (Dcc * Gcc * Fcc) / ccDenom;
+          
+          // Direct lighting
+          vec3 radiance = uLightColor * uLightIntensity;
+          vec3 direct = (diffuse + specular + uClearcoat * clearcoatSpec) * radiance * NdotL;
+          
+          // Simple ambient (AO)
+          vec3 ambient = uBaseColor * 0.03 * uAmbientOcclusion; // small ambient term
+          
+          vec3 color = ambient + direct;
           fragColor = vec4(color, 1.0);
         }
         )";
@@ -37,6 +121,15 @@ static const char* fragmentShaderCode = R"(
 static GLuint program = 0;
 static GLint positionHandle = 0;
 static GLint uLightDirLocation = -1;
+static GLint uLightColorLocation = -1;
+static GLint uLightIntensityLocation = -1;
+static GLint uCameraPosLocation = -1;
+static GLint uBaseColorLocation = -1;
+static GLint uMetallicLocation = -1;
+static GLint uRoughnessLocation = -1;
+static GLint uAOLocation = -1;
+static GLint uClearcoatLocation = -1;
+static GLint uClearcoatRoughnessLocation = -1;
 GLuint vbo = 0;
 GLuint ibo = 0;
 GLsizei sphereIndexCount = 0;
@@ -171,6 +264,15 @@ static void createProgram() {
     
     positionHandle = glGetAttribLocation(program, "aPosition");
     uLightDirLocation = glGetUniformLocation(program, "uLightDir");
+    uLightColorLocation = glGetUniformLocation(program, "uLightColor");
+    uLightIntensityLocation = glGetUniformLocation(program, "uLightIntensity");
+    uCameraPosLocation = glGetUniformLocation(program, "uCameraPos");
+    uBaseColorLocation = glGetUniformLocation(program, "uBaseColor");
+    uMetallicLocation = glGetUniformLocation(program, "uMetallic");
+    uRoughnessLocation = glGetUniformLocation(program, "uRoughness");
+    uAOLocation = glGetUniformLocation(program, "uAmbientOcclusion");
+    uClearcoatLocation = glGetUniformLocation(program, "uClearcoat");
+    uClearcoatRoughnessLocation = glGetUniformLocation(program, "uClearcoatRoughness");
     
     // Clean up shaders as they're linked into our program now and no longer necessary
     glDeleteShader(vertexShader);
@@ -223,10 +325,19 @@ extern "C" {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (program) {
             glUseProgram(program);
-            // 设置方向光（世界坐标等于物体坐标，此处球心在原点）
-            if (uLightDirLocation >= 0) {
-                glUniform3f(uLightDirLocation, 0.5f, 1.0f, -1.3f);
-            }
+            // 光照与相机
+            if (uLightDirLocation >= 0) glUniform3f(uLightDirLocation, 0.5f, 1.0f, -1.3f);
+            if (uLightColorLocation >= 0) glUniform3f(uLightColorLocation, 1.0f, 1.0f, 1.0f);
+            if (uLightIntensityLocation >= 0) glUniform1f(uLightIntensityLocation, 2.5f);
+            if (uCameraPosLocation >= 0) glUniform3f(uCameraPosLocation, 0.0f, 0.0f, 3.0f);
+
+            // 车漆风格 PBR 参数（类似 Filament 思路：介电基底 + clearcoat）
+            if (uBaseColorLocation >= 0) glUniform3f(uBaseColorLocation, 0.7f, 0.05f, 0.05f);
+            if (uMetallicLocation >= 0) glUniform1f(uMetallicLocation, 0.0f);
+            if (uRoughnessLocation >= 0) glUniform1f(uRoughnessLocation, 0.2f);
+            if (uAOLocation >= 0) glUniform1f(uAOLocation, 1.0f);
+            if (uClearcoatLocation >= 0) glUniform1f(uClearcoatLocation, 1.0f);
+            if (uClearcoatRoughnessLocation >= 0) glUniform1f(uClearcoatRoughnessLocation, 0.1f);
             glEnableVertexAttribArray(positionHandle);
             glBindBuffer(GL_ARRAY_BUFFER, vbo);
             glVertexAttribPointer(positionHandle, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
