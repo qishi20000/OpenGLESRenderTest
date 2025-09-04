@@ -10,21 +10,31 @@ static const char* TAG = "OpenGLESTriangle";
 // Shader sources
 static const char* vertexShaderCode =
         "#version 300 es\n"
-        "layout(location = 0) in vec4 vPosition;\n"
+        "layout(location = 0) in vec3 aPosition;\n"
+        "out vec3 vNormal;\n"
         "void main() {\n"
-        "  gl_Position = vPosition;\n"
+        "  vNormal = normalize(aPosition);\n"
+        "  gl_Position = vec4(aPosition, 1.0);\n"
         "}\n";
 
 static const char* fragmentShaderCode =
         "#version 300 es\n"
         "precision mediump float;\n"
+        "in vec3 vNormal;\n"
+        "uniform vec3 uLightDir;\n"
         "out vec4 fragColor;\n"
         "void main() {\n"
-        "  fragColor = vec4(1.0, 0.0, 0.0, 1.0);\n"
+        "  vec3 n = normalize(vNormal);\n"
+        "  vec3 l = normalize(uLightDir);\n"
+        "  float diff = max(dot(n, l), 0.0);\n"
+        "  vec3 base = vec3(0.8, 0.8, 0.8);\n"
+        "  vec3 color = base * (0.2 + 0.8 * diff);\n"
+        "  fragColor = vec4(color, 1.0);\n"
         "}\n";
 
 static GLuint program = 0;
 static GLint positionHandle = 0;
+static GLint uLightDirLocation = -1;
 GLuint vbo = 0;
 GLuint ibo = 0;
 GLsizei sphereIndexCount = 0;
@@ -157,7 +167,8 @@ static void createProgram() {
         return;
     }
     
-    positionHandle = glGetAttribLocation(program, "vPosition");
+    positionHandle = glGetAttribLocation(program, "aPosition");
+    uLightDirLocation = glGetUniformLocation(program, "uLightDir");
     
     // Clean up shaders as they're linked into our program now and no longer necessary
     glDeleteShader(vertexShader);
@@ -210,6 +221,10 @@ extern "C" {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (program) {
             glUseProgram(program);
+            // 设置方向光（世界坐标等于物体坐标，此处球心在原点）
+            if (uLightDirLocation >= 0) {
+                glUniform3f(uLightDirLocation, 0.5f, 1.0f, -1.3f);
+            }
             glEnableVertexAttribArray(positionHandle);
             glBindBuffer(GL_ARRAY_BUFFER, vbo);
             glVertexAttribPointer(positionHandle, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
