@@ -1,15 +1,5 @@
-# ninja log v5
-0	154	1754216569720575180	CMakeFiles/triangle_renderer.dir/triangle_renderer.cpp.o	63a9080ae9a85722
-155	270	1754216569835750674	/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a/libtriangle_renderer.so	e299a747d5fadcdd
-1	1850	1756221294162166836	CMakeFiles/triangle_renderer.dir/triangle_renderer.cpp.o	63a9080ae9a85722
-1850	2937	1756221295249073879	/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a/libtriangle_renderer.so	e299a747d5fadcdd
-0	166	1756221397929896904	CMakeFiles/triangle_renderer.dir/triangle_renderer.cpp.o	63a9080ae9a85722
-166	277	1756221398040517201	/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a/libtriangle_renderer.so	e299a747d5fadcdd
-8	299	1756274646871958948	CMakeFiles/triangle_renderer.dir/triangle_renderer.cpp.o	63a9080ae9a85722
-299	446	1756274647019804655	/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a/libtriangle_renderer.so	e299a747d5fadcdd
-7	387	1756301497458724094	CMakeFiles/triangle_renderer.dir/triangle_renderer.cpp.o	63a9080ae9a85722
-387	546	1756301497619005379	/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a/libtriangle_renderer.so	e299a747d5fadcdd
-0	48	1756301522525682725	CMakeFiles/triangle_renderer.dir/triangle_renderer.cpp.o	63a9080ae9a85722
-48	93	1756301522569961867	/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a/libtriangle_renderer.so	e299a747d5fadcdd
-1	63	1756301540797773817	CMakeFiles/triangle_renderer.dir/triangle_renderer.cpp.o	63a9080ae9a85722
-63	198	1756301540933191388	/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a/libtriangle_renderer.so	e299a747d5fadcdd
+# ninja log v7
+1	64	1756992564217162277	CMakeFiles/triangle_renderer.dir/triangle_renderer.cpp.o	c152cb94915d49a2
+65	115	1756992564281400818	/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a/libtriangle_renderer.so	f7494973f09e5f44
+1	257	1756993011582578493	CMakeFiles/triangle_renderer.dir/triangle_renderer.cpp.o	c152cb94915d49a2
+257	393	1756993011838503522	/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/build/intermediates/cxx/Debug/6z3m5yn6/obj/arm64-v8a/libtriangle_renderer.so	f7494973f09e5f44

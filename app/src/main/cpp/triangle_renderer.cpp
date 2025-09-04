@@ -3,6 +3,7 @@
 #include <GLES3/gl3.h>
 #include <GLES3/gl3ext.h>
 #include <stdlib.h>  // 添加此头文件以使用malloc和free
+#include <math.h>
 
 static const char* TAG = "OpenGLESTriangle";
 
@@ -25,6 +26,60 @@ static const char* fragmentShaderCode =
 static GLuint program = 0;
 static GLint positionHandle = 0;
 GLuint vbo = 0;
+GLuint ibo = 0;
+GLsizei sphereIndexCount = 0;
+
+// 生成球体网格（仅位置）
+static void generateSphereMesh(float radius, int stacks, int slices,
+                               GLfloat **outVertices, GLushort **outIndices,
+                               int *outVertexCount, int *outIndexCount) {
+    int vertexCount = (stacks + 1) * (slices + 1);
+    int indexCount = stacks * slices * 6;
+
+    GLfloat *vertices = (GLfloat *)malloc(sizeof(GLfloat) * vertexCount * 3);
+    GLushort *indices = (GLushort *)malloc(sizeof(GLushort) * indexCount);
+
+    int v = 0;
+    for (int i = 0; i <= stacks; ++i) {
+        float vRatio = (float)i / (float)stacks;
+        float phi = (float)M_PI * vRatio;    // 0..PI
+        float y = cosf(phi);
+        float r = sinf(phi);
+
+        for (int j = 0; j <= slices; ++j) {
+            float uRatio = (float)j / (float)slices;
+            float theta = 2.0f * (float)M_PI * uRatio; // 0..2PI
+            float x = r * cosf(theta);
+            float z = r * sinf(theta);
+
+            vertices[v++] = radius * x;
+            vertices[v++] = radius * y;
+            vertices[v++] = radius * z;
+        }
+    }
+
+    int idx = 0;
+    for (int i = 0; i < stacks; ++i) {
+        for (int j = 0; j < slices; ++j) {
+            int row1 = i * (slices + 1);
+            int row2 = (i + 1) * (slices + 1);
+
+            GLushort a = (GLushort)(row1 + j);
+            GLushort b = (GLushort)(row2 + j);
+            GLushort c = (GLushort)(row2 + j + 1);
+            GLushort d = (GLushort)(row1 + j + 1);
+
+            indices[idx++] = a; indices[idx++] = b; indices[idx++] = c;
+            indices[idx++] = a; indices[idx++] = c; indices[idx++] = d;
+        }
+    }
+
+    *outVertices = vertices;
+    *outIndices = indices;
+    *outVertexCount = vertexCount;
+    *outIndexCount = indexCount;
+}
+
 // Load shader helper function
 static GLuint loadShader(GLenum type, const char* shaderCode) {
     GLuint shader = glCreateShader(type);
@@ -114,12 +169,34 @@ extern "C" {
     Java_com_example_openglestriangle_TriangleRenderer_init(JNIEnv *env, jclass clazz) {
         __android_log_print(ANDROID_LOG_INFO, TAG, "Initializing TriangleRenderer");
         createProgram();
+        // 创建球体网格并上传到GPU
+        if (vbo == 0 || ibo == 0) {
+            GLfloat *vertices = NULL;
+            GLushort *indices = NULL;
+            int vertexCount = 0;
+            int indexCount = 0;
+            generateSphereMesh(0.7f, 40, 40, &vertices, &indices, &vertexCount, &indexCount);
+
+            if (vbo == 0) glGenBuffers(1, &vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * vertexCount * 3, vertices, GL_STATIC_DRAW);
+
+            if (ibo == 0) glGenBuffers(1, &ibo);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLushort) * indexCount, indices, GL_STATIC_DRAW);
+
+            sphereIndexCount = (GLsizei)indexCount;
+
+            if (vertices) free(vertices);
+            if (indices) free(indices);
+        }
     }
 
     JNIEXPORT void JNICALL
     Java_com_example_openglestriangle_TriangleRenderer_surfaceCreated(JNIEnv *env, jclass clazz) {
         __android_log_print(ANDROID_LOG_INFO, TAG, "Surface created");
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // 设置背景色为黑色
+        glEnable(GL_DEPTH_TEST);
     }
 
     JNIEXPORT void JNICALL
@@ -130,26 +207,14 @@ extern "C" {
 
     JNIEXPORT void JNICALL
     Java_com_example_openglestriangle_TriangleRenderer_drawFrame(JNIEnv *env, jclass clazz) {
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (program) {
             glUseProgram(program);
             glEnableVertexAttribArray(positionHandle);
-            static const GLfloat triangleCoords[] = {
-                    0.0f,  0.5f, 0.0f,  // top
-                    -0.5f, -0.5f, 0.0f,  // bottom left
-                    0.5f, -0.5f, 0.0f   // bottom right
-            };
-            if(vbo == 0)
-            {
-                glGenBuffers(1,&vbo);
-                glBindBuffer(GL_ARRAY_BUFFER,vbo);
-                glBufferData(GL_ARRAY_BUFFER,3*3*sizeof(GLfloat),triangleCoords,GL_STATIC_DRAW);
-            }
-
-
-            glBindBuffer(GL_ARRAY_BUFFER,vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo);
             glVertexAttribPointer(positionHandle, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+            glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_SHORT, (void*)0);
             glDisableVertexAttribArray(positionHandle);
         }
     }

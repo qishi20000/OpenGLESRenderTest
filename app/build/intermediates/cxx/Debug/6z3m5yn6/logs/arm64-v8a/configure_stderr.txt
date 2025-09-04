@@ -44,7 +44,7 @@ CMake Deprecation Warning at /Users/qishi20000/Library/Android/sdk/ndk/26.1.1090
   to work with policies introduced by <max> or earlier.
 Call Stack (most recent call first):
   /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/4.0.3/CMakeSystem.cmake:6 (include)
-  /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/CMakeScratch/TryCompile-MHnOUR/CMakeLists.txt:4 (project)
+  /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/CMakeScratch/TryCompile-3glYPX/CMakeLists.txt:4 (project)
 
 
 CMake Deprecation Warning at /Users/qishi20000/Library/Android/sdk/ndk/26.1.10909125/build/cmake/android-legacy.toolchain.cmake:34 (cmake_minimum_required):
@@ -57,7 +57,7 @@ CMake Deprecation Warning at /Users/qishi20000/Library/Android/sdk/ndk/26.1.1090
 Call Stack (most recent call first):
   /Users/qishi20000/Library/Android/sdk/ndk/26.1.10909125/build/cmake/android.toolchain.cmake:54 (include)
   /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/4.0.3/CMakeSystem.cmake:6 (include)
-  /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/CMakeScratch/TryCompile-MHnOUR/CMakeLists.txt:4 (project)
+  /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/CMakeScratch/TryCompile-3glYPX/CMakeLists.txt:4 (project)
 
 
 CMake Deprecation Warning at /Users/qishi20000/Library/Android/sdk/ndk/26.1.10909125/build/cmake/android.toolchain.cmake:34 (cmake_minimum_required):
@@ -69,7 +69,7 @@ CMake Deprecation Warning at /Users/qishi20000/Library/Android/sdk/ndk/26.1.1090
   to work with policies introduced by <max> or earlier.
 Call Stack (most recent call first):
   /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/4.0.3/CMakeSystem.cmake:6 (include)
-  /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/CMakeScratch/TryCompile-fGCVEw/CMakeLists.txt:4 (project)
+  /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/CMakeScratch/TryCompile-TatLhX/CMakeLists.txt:4 (project)
 
 
 CMake Deprecation Warning at /Users/qishi20000/Library/Android/sdk/ndk/26.1.10909125/build/cmake/android-legacy.toolchain.cmake:34 (cmake_minimum_required):
@@ -82,6 +82,6 @@ CMake Deprecation Warning at /Users/qishi20000/Library/Android/sdk/ndk/26.1.1090
 Call Stack (most recent call first):
   /Users/qishi20000/Library/Android/sdk/ndk/26.1.10909125/build/cmake/android.toolchain.cmake:54 (include)
   /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/4.0.3/CMakeSystem.cmake:6 (include)
-  /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/CMakeScratch/TryCompile-fGCVEw/CMakeLists.txt:4 (project)
+  /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a/CMakeFiles/CMakeScratch/TryCompile-TatLhX/CMakeLists.txt:4 (project)
 
 
