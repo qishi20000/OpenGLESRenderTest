@@ -476,11 +476,15 @@ static const char* fragmentShaderCode = R"(
           return 0.16 * reflectance * reflectance;
         }
         
-        // Filament 精确的 BRDF 函数实现
-        float D_GGX(float roughness, float NoH, const vec3 h) {
-          // Filament 的精确 GGX 实现，包括移动端优化
+        // Filament 精确的 BRDF 函数实现（与fs.glsl完全一致）
+        float D_GGX(float roughness, float NoH, const vec3 h, const vec3 n) {
+          // Walter et al. 2007, "Microfacet Models for Refraction through Rough Surfaces"
+          // 使用Lagrange恒等式计算1-NoH^2，避免精度问题
+          vec3 NxH = cross(n, h);
+          float oneMinusNoHSquared = dot(NxH, NxH);
+          
           float a = NoH * roughness;
-          float k = roughness / (1.0 - NoH * NoH + a * a);
+          float k = roughness / (oneMinusNoHSquared + a * a);
           float d = k * k * (1.0 / PI);
           return clamp(d, 0.0, 65504.0);
         }
@@ -496,16 +500,22 @@ static const char* fragmentShaderCode = R"(
         
         vec3 F_Schlick(const vec3 f0, float f90, float VoH) {
           // Filament 的 Schlick Fresnel 实现 - Schlick 1994
-          return f0 + (f90 - f0) * pow5(1.0 - VoH);
+          return f0 + (vec3(f90) - f0) * pow5(1.0 - VoH);
         }
         
         vec3 F_Schlick(const vec3 f0, float VoH) {
           // Filament 的简化 Schlick Fresnel (f90 = 1.0)
-          float f = pow5(1.0 - VoH);
+          float f = pow(1.0 - VoH, 5.0);
           return f + f0 * (1.0 - f);
         }
         
-        // Filament 的漫反射 BRDF
+        // 动态f90计算（与fs.glsl一致）
+        vec3 fresnel(const vec3 f0, float LoH) {
+          float f90 = saturate(dot(f0, vec3(50.0 * 0.33)));
+          return F_Schlick(f0, f90, LoH);
+        }
+        
+        // Filament 的漫反射 BRDF（与fs.glsl一致）
         float Fd_Lambert() {
           return 1.0 / PI;
         }
@@ -516,6 +526,11 @@ static const char* fragmentShaderCode = R"(
           float lightScatter = F_Schlick(vec3(1.0), f90, NoL).r;
           float viewScatter = F_Schlick(vec3(1.0), f90, NoV).r;
           return lightScatter * viewScatter * (1.0 / PI);
+        }
+        
+        // 漫反射BRDF分发（与fs.glsl一致）
+        float diffuse(float roughness, float NoV, float NoL, float LoH) {
+          return Fd_Lambert(); // 默认使用Lambert
         }
         
         // Filament 的 DFG 预计算项（使用BRDF LUT纹理）
@@ -591,69 +606,70 @@ static const char* fragmentShaderCode = R"(
           float reflectance = computeDielectricF0(0.5);
           vec3 dielectricSpecularF0 = min(reflectance * specularColorFactor, vec3(1.0)) * specularStrength;
           vec3 f0 = baseColor.rgb * metallic + dielectricSpecularF0 * (1.0 - metallic);
-          float f90 = 1.0; // Filament 标准
           
           // 镜面反射 BRDF（使用 Filament 的精确实现）
-          float D = D_GGX(roughness, NoH, H);
+          float D = D_GGX(roughness, NoH, H, N);
           float V_brdf = V_SmithGGXCorrelated(roughness, NoV, NoL);
-          vec3 F = F_Schlick(f0, f90, VoH);
+          vec3 F = fresnel(f0, VoH); // 使用动态f90计算
           
           vec3 specular = (D * V_brdf) * F;
           
-          // 漫反射 BRDF（使用 Filament 的 Burley 模型）
+          // 漫反射 BRDF（使用 Filament 的 Lambert 模型，与fs.glsl一致）
           vec3 diffuseColor = computeDiffuseColor(baseColor, metallic);
-          float diffuse = Fd_Burley(roughness, NoV, NoL, LoH);
-          vec3 diffuseBRDF = diffuseColor * diffuse;
+          float diffuseBRDF = diffuse(roughness, NoV, NoL, LoH); // 使用Lambert
+          vec3 Fd = diffuseColor * diffuseBRDF;
           
           // 能量守恒（按照 Filament 标准）
           vec3 kS = F;
           vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
-          diffuseBRDF *= kD;
+          Fd *= kD;
           
           // 计算 DFG 项（用于能量补偿和 IBL）
           vec3 dfg = prefilteredDFG(perceptualRoughness, NoV);
           
-          // 能量补偿（Filament 的多散射补偿）- 汽车漆效果优化
-          vec3 energyCompensation = 1.0 + f0 * (1.0 / dfg.y - 1.0) * 0.5; // 降低能量补偿强度
+          // 能量补偿（Filament 的多散射补偿，与fs.glsl完全一致）
+          vec3 energyCompensation = 1.0 + f0 * (1.0 / dfg.y - 1.0);
           specular *= energyCompensation;
           
-          // 直接光照
+          // 直接光照（与fs.glsl的surfaceShading函数一致）
           vec3 lightColor = uLightColorIntensity.rgb;
           float lightIntensity = uLightColorIntensity.a;
           vec3 radiance = lightColor * lightIntensity;
           
-          vec3 directLighting = (diffuseBRDF + specular) * radiance * NoL;
+          // 按照fs.glsl的surfaceShading函数计算
+          vec3 color = Fd + specular;
+          vec3 directLighting = (color * radiance) * NoL;
           
-          // IBL 计算（按照 Filament 标准）
+          // IBL 计算（与fs.glsl的evaluateIBL函数一致）
           vec3 E = specularDFG(f0, dfg);
           
-          // 漫反射 IBL（改进的能量守恒）
+          // 漫反射 IBL（与fs.glsl一致）
           vec3 diffuseIrradiance = diffuseIrradiance(N);
-          vec3 Fd_IBL = diffuseColor * diffuseIrradiance * (1.0 - E) * (1.0 / PI);
+          vec3 Fd_IBL = diffuseColor * diffuseIrradiance * (1.0 - E) * diffuseBRDF;
           
-          // 镜面反射 IBL（改进的实现）
+          // 镜面反射 IBL（与fs.glsl一致）
           vec3 reflection = reflect(-V, N);
           vec3 Fr_IBL = E * prefilteredRadiance(reflection, perceptualRoughness);
           
-          // 应用环境光遮蔽
+          // 应用环境光遮蔽（与fs.glsl一致）
           Fd_IBL *= ao;
           Fr_IBL *= ao;
           
-          // 组合光照（按照 Filament 标准）
-          vec3 color = Fd_IBL + Fr_IBL + directLighting;
+          // 组合光照（与fs.glsl的evaluateIBL函数一致）
+          vec3 finalColor = Fd_IBL + Fr_IBL + directLighting;
           
-          // 添加自发光（按照 Filament 标准）
-          color += emissive;
+          // 添加自发光（与fs.glsl一致）
+          finalColor += emissive;
           
           // 调试：确保颜色不为零
-          if (length(color) < 0.01) {
-            color = vec3(0.1, 0.1, 0.1); // 最小可见颜色
+          if (length(finalColor) < 0.01) {
+            finalColor = vec3(0.1, 0.1, 0.1); // 最小可见颜色
           }
           
           // 确保颜色在合理范围内
-          color = saturate(color);
+          finalColor = saturate(finalColor);
           
-          fragColor = vec4(color, baseColor.a);
+          fragColor = vec4(finalColor, baseColor.a);
         }
         )";
 
@@ -1353,7 +1369,7 @@ extern "C" {
             
             // 设置材质参数（改进的材质设置）
             if (uBaseColorFactorLocation >= 0) {
-                glUniform4f(uBaseColorFactorLocation, 0.0f, 0.0f, 0.0f, 1.0f); // 适中的灰白色
+                glUniform4f(uBaseColorFactorLocation, 0.1f, 0.1f, 0.1f, 1.0f); // 适中的灰白色
             }
             if (uMetallicFactorLocation >= 0) {
                 glUniform1f(uMetallicFactorLocation, 0.15695f); // 增加金属感以获得更好的反射
