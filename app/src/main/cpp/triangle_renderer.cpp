@@ -12,6 +12,10 @@
 #include <fstream>
 #include <sstream>
 
+// 使用stb_image库
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 static const char* TAG = "OpenGLESTriangle";
 
 // OBJ加载器结构体
@@ -30,6 +34,11 @@ struct OBJMesh {
 
 // Asset Manager
 static AAssetManager* g_assetManager = nullptr;
+
+// IBL纹理
+static GLuint g_diffuseIrradianceTexture = 0;
+static GLuint g_specularReflectionTexture = 0;
+static GLuint g_brdfLUTTexture = 0;
 
 // OBJ文件加载函数
 static std::string readAssetFile(const char* filename) {
@@ -54,6 +63,202 @@ static std::string readAssetFile(const char* filename) {
     free(buffer);
     
     return content;
+}
+
+// 图像数据结构体
+struct ImageData {
+    uint8_t* data;
+    int width;
+    int height;
+    int channels;
+};
+
+// 从Asset Manager加载图像文件
+static ImageData loadImageFromAsset(const char* filename) {
+    ImageData imageData = {nullptr, 0, 0, 0};
+    
+    if (!g_assetManager) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "Asset manager not initialized");
+        return imageData;
+    }
+    
+    AAsset* asset = AAssetManager_open(g_assetManager, filename, AASSET_MODE_BUFFER);
+    if (!asset) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "Failed to open image file: %s", filename);
+        return imageData;
+    }
+    
+    size_t length = AAsset_getLength(asset);
+    if (length == 0) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "Image file is empty: %s", filename);
+        AAsset_close(asset);
+        return imageData;
+    }
+    
+    uint8_t* buffer = (uint8_t*)malloc(length);
+    if (!buffer) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "Failed to allocate memory for image file: %s", filename);
+        AAsset_close(asset);
+        return imageData;
+    }
+    
+    AAsset_read(asset, buffer, length);
+    AAsset_close(asset);
+    
+    // 使用stb_image加载图像
+    int width, height, channels;
+    uint8_t* data = stbi_load_from_memory(buffer, length, &width, &height, &channels, 4); // 强制4通道RGBA
+    free(buffer);
+    
+    if (!data) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "Failed to load image with stb_image: %s", filename);
+        return imageData;
+    }
+    
+    imageData.data = data;
+    imageData.width = width;
+    imageData.height = height;
+    imageData.channels = 4; // stb_image强制为4通道
+    
+    __android_log_print(ANDROID_LOG_INFO, TAG, "Loaded image: %s (%dx%d, %d channels)", 
+                       filename, imageData.width, imageData.height, imageData.channels);
+    
+    return imageData;
+}
+
+// 从图像数据创建OpenGL纹理
+static GLuint createTextureFromImage(const ImageData& imageData, GLenum target = GL_TEXTURE_2D) {
+    if (!imageData.data || imageData.width == 0 || imageData.height == 0) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "Invalid image data for texture creation");
+        return 0;
+    }
+    
+    GLuint textureId;
+    glGenTextures(1, &textureId);
+    glBindTexture(target, textureId);
+    
+    // 设置纹理参数
+    glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    if (target == GL_TEXTURE_CUBE_MAP) {
+        glTexParameteri(target, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    }
+    
+    // 上传纹理数据
+    glTexImage2D(target, 0, GL_RGBA, imageData.width, imageData.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, imageData.data);
+    
+    // 生成mipmaps
+    glGenerateMipmap(target);
+    
+    __android_log_print(ANDROID_LOG_INFO, TAG, "Created texture from image (ID: %d, %dx%d)", 
+                       textureId, imageData.width, imageData.height);
+    
+    return textureId;
+}
+
+// 加载图像纹理文件
+static GLuint loadImageTexture(const char* filename, GLenum target = GL_TEXTURE_2D) {
+    ImageData imageData = loadImageFromAsset(filename);
+    if (!imageData.data) {
+        return 0;
+    }
+    
+    GLuint textureId = createTextureFromImage(imageData, target);
+    stbi_image_free(imageData.data);
+    
+    return textureId;
+}
+
+// 从6个图像文件创建立方体贴图
+static GLuint loadCubemapFromImageFiles(const char* filenames[6]) {
+    GLuint textureId;
+    glGenTextures(1, &textureId);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, textureId);
+    
+    // 设置纹理参数
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    
+    // 立方体贴图的6个面（按照OpenGL标准顺序）
+    GLenum faces[6] = {
+        GL_TEXTURE_CUBE_MAP_POSITIVE_X,  // +X (右) - px.png
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_X,  // -X (左) - nx.png
+        GL_TEXTURE_CUBE_MAP_POSITIVE_Y,  // +Y (上) - py.png
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,  // -Y (下) - ny.png
+        GL_TEXTURE_CUBE_MAP_POSITIVE_Z,  // +Z (前) - pz.png
+        GL_TEXTURE_CUBE_MAP_NEGATIVE_Z   // -Z (后) - nz.png
+    };
+    
+    bool success = true;
+    for (int i = 0; i < 6; i++) {
+        ImageData imageData = loadImageFromAsset(filenames[i]);
+        if (!imageData.data) {
+            __android_log_print(ANDROID_LOG_ERROR, TAG, "Failed to load cubemap face: %s", filenames[i]);
+            success = false;
+            break;
+        }
+        
+        // 上传到对应的立方体贴图面
+        glTexImage2D(faces[i], 0, GL_RGBA, imageData.width, imageData.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, imageData.data);
+        stbi_image_free(imageData.data);
+    }
+    
+    if (!success) {
+        glDeleteTextures(1, &textureId);
+        return 0;
+    }
+    
+    // 生成mipmaps
+    glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+    
+    __android_log_print(ANDROID_LOG_INFO, TAG, "Created cubemap from image files (ID: %d)", textureId);
+    return textureId;
+}
+
+
+
+
+// 生成BRDF LUT纹理（当没有现成的BRDF LUT文件时）
+static GLuint generateBRDFLUT() {
+    GLuint textureId;
+    glGenTextures(1, &textureId);
+    glBindTexture(GL_TEXTURE_2D, textureId);
+    
+    // 设置纹理参数
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    
+    // 生成BRDF LUT数据
+    const int size = 512;
+    float* data = (float*)malloc(size * size * 2 * sizeof(float));
+    
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            float NdotV = (float)x / (float)(size - 1);
+            float roughness = (float)y / (float)(size - 1);
+            
+            // 简化的BRDF LUT计算
+            float F = 0.04 + 0.96 * pow(1.0 - NdotV, 5.0);
+            float G = 1.0 / (4.0 * NdotV + 0.1);
+            
+            int index = (y * size + x) * 2;
+            data[index] = F;
+            data[index + 1] = G;
+        }
+    }
+    
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, size, size, 0, GL_RG, GL_FLOAT, data);
+    free(data);
+    
+    __android_log_print(ANDROID_LOG_INFO, TAG, "Generated BRDF LUT texture (ID: %d)", textureId);
+    return textureId;
 }
 
 static OBJMesh loadOBJFile(const char* filename) {
@@ -232,6 +437,11 @@ static const char* fragmentShaderCode = R"(
         uniform float uSpecularStrength;
         uniform vec3 uSpecularColorFactor;
         
+        // IBL纹理
+        uniform samplerCube uDiffuseIrradianceMap;
+        uniform samplerCube uSpecularReflectionMap;
+        uniform sampler2D uBRDFLUTMap;
+        
         out vec4 fragColor;
         
         const float PI = 3.14159265359;
@@ -308,51 +518,34 @@ static const char* fragmentShaderCode = R"(
           return lightScatter * viewScatter * (1.0 / PI);
         }
         
-        // Filament 的 DFG 预计算项（改进的近似）
+        // Filament 的 DFG 预计算项（使用BRDF LUT纹理）
         vec3 prefilteredDFG(float perceptualRoughness, float NoV) {
-          // 改进的 DFG 近似，更接近 Filament 的 LUT
-          float roughness = perceptualRoughness * perceptualRoughness;
-          vec3 f0 = vec3(0.04);
-          float f90 = 1.0;
-          
-          // 更准确的 DFG 近似
-          float F = F_Schlick(f0, f90, NoV).r;
-          float G = 1.0 / (4.0 * NoV + 0.1); // 简化的几何项
-          float D = 1.0 / (roughness * roughness + 0.1); // 简化的分布项
-          
-          return vec3(F, G, D);
+          // 检查BRDF LUT纹理是否可用
+          if (textureSize(uBRDFLUTMap, 0).x > 0) {
+            vec2 brdf = texture(uBRDFLUTMap, vec2(NoV, perceptualRoughness)).rg;
+            return vec3(brdf.x, brdf.y, 1.0);
+          } else {
+            // Fallback计算（当BRDF LUT不可用时）
+            float roughness = perceptualRoughness * perceptualRoughness;
+            vec3 f0 = vec3(0.04);
+            float f90 = 1.0;
+            float F = F_Schlick(f0, f90, NoV).r;
+            float G = 1.0 / (4.0 * NoV + 0.1);
+            float D = 1.0 / (roughness * roughness + 0.1);
+            return vec3(F, G, D);
+          }
         }
         
-        // IBL 漫反射辐照度（改进版本）
+        // IBL 漫反射辐照度（使用立方体贴图）
         vec3 diffuseIrradiance(vec3 normal) {
-          // 改进的环境光照，模拟球谐函数的效果
-          float NdotY = normal.y;
-          float NdotX = normal.x;
-          float NdotZ = normal.z;
-          
-          // 简化的球谐函数近似 - 降低环境光强度以获得更好的明暗对比
-          vec3 color = vec3(0.08, 0.08, 0.08); // 基础环境色 - 降低强度
-          color += vec3(0.05, 0.05, 0.05) * NdotY; // 垂直渐变
-          color += vec3(0.02, 0.02, 0.02) * NdotX; // 水平渐变
-          color += vec3(0.01, 0.01, 0.01) * NdotZ; // 深度渐变
-          
-          return color;
+          return textureLod(uDiffuseIrradianceMap, normal, 0.0).rgb;
         }
         
-        // IBL 镜面反射（改进版本）
+        // IBL 镜面反射（使用预过滤环境贴图）
         vec3 prefilteredRadiance(vec3 reflection, float perceptualRoughness) {
-          // 改进的镜面反射，模拟预过滤环境贴图
           float roughness = perceptualRoughness * perceptualRoughness;
-          float lod = roughness * 6.0; // 更准确的 LOD 计算
-          
-          // 基于反射方向的颜色变化 - 降低强度以获得更好的明暗对比
-          vec3 baseColor = vec3(0.15, 0.15, 0.15); // 降低基础反射强度
-          float fresnel = pow(1.0 - max(dot(reflection, vec3(0.0, 1.0, 0.0)), 0.0), 2.0);
-          vec3 color = mix(baseColor, vec3(0.4, 0.4, 0.4), fresnel); // 降低高光强度
-          
-          // 基于粗糙度的衰减
-          float attenuation = 1.0 - roughness;
-          return color * attenuation;
+          float lod = roughness * 6.0; // LOD 计算，对应不同的粗糙度级别
+          return textureLod(uSpecularReflectionMap, reflection, lod).rgb;
         }
         
         // 计算镜面反射的 DFG 项（Filament 标准）
@@ -420,8 +613,8 @@ static const char* fragmentShaderCode = R"(
           // 计算 DFG 项（用于能量补偿和 IBL）
           vec3 dfg = prefilteredDFG(perceptualRoughness, NoV);
           
-          // 能量补偿（Filament 的多散射补偿）
-          vec3 energyCompensation = 1.0 + f0 * (1.0 / dfg.y - 1.0);
+          // 能量补偿（Filament 的多散射补偿）- 汽车漆效果优化
+          vec3 energyCompensation = 1.0 + f0 * (1.0 / dfg.y - 1.0) * 0.5; // 降低能量补偿强度
           specular *= energyCompensation;
           
           // 直接光照
@@ -496,6 +689,11 @@ static GLint uSpecularColorFactorLocation = -1;
 // Texture uniforms
 static GLint uMetallicRoughnessMapLocation = -1;
 static GLint uOcclusionMapLocation = -1;
+
+// IBL texture uniforms
+static GLint uDiffuseIrradianceMapLocation = -1;
+static GLint uSpecularReflectionMapLocation = -1;
+static GLint uBRDFLUTMapLocation = -1;
 
 GLuint vbo = 0;
 GLuint ibo = 0;
@@ -840,6 +1038,22 @@ static void createProgram() {
     uSpecularStrengthLocation = glGetUniformLocation(program, "uSpecularStrength");
     uSpecularColorFactorLocation = glGetUniformLocation(program, "uSpecularColorFactor");
     
+    // 获取IBL纹理uniform位置
+    uDiffuseIrradianceMapLocation = glGetUniformLocation(program, "uDiffuseIrradianceMap");
+    uSpecularReflectionMapLocation = glGetUniformLocation(program, "uSpecularReflectionMap");
+    uBRDFLUTMapLocation = glGetUniformLocation(program, "uBRDFLUTMap");
+    
+    // 检查IBL纹理uniform是否成功获取
+    if (uDiffuseIrradianceMapLocation < 0) {
+        __android_log_print(ANDROID_LOG_WARN, TAG, "uDiffuseIrradianceMap uniform not found");
+    }
+    if (uSpecularReflectionMapLocation < 0) {
+        __android_log_print(ANDROID_LOG_WARN, TAG, "uSpecularReflectionMap uniform not found");
+    }
+    if (uBRDFLUTMapLocation < 0) {
+        __android_log_print(ANDROID_LOG_WARN, TAG, "uBRDFLUTMap uniform not found");
+    }
+    
     // Clean up shaders as they're linked into our program now and no longer necessary
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
@@ -988,6 +1202,50 @@ extern "C" {
                 // 如果OBJ加载失败，可以在这里添加fallback逻辑
             }
         }
+        
+        // 加载IBL纹理（使用6张分开的PNG图片）
+        if (g_diffuseIrradianceTexture == 0) {
+            // 直接加载6个面的PNG文件
+            const char* diffuseFaces[6] = {
+                "px.png",  // +X (右)
+                "nx.png",  // -X (左)
+                "py.png",  // +Y (上)
+                "ny.png",  // -Y (下)
+                "pz.png",  // +Z (前)
+                "nz.png"   // -Z (后)
+            };
+            g_diffuseIrradianceTexture = loadCubemapFromImageFiles(diffuseFaces);
+            if (g_diffuseIrradianceTexture == 0) {
+                __android_log_print(ANDROID_LOG_WARN, TAG, "Failed to load diffuse irradiance cubemap, using fallback");
+               // g_diffuseIrradianceTexture = generateFallbackTexture();
+            }
+        }
+        
+        if (g_specularReflectionTexture == 0) {
+            // 使用相同的6张图片作为镜面反射纹理
+            const char* specularFaces[6] = {
+                "px.png",  // +X (右)
+                "nx.png",  // -X (左)
+                "py.png",  // +Y (上)
+                "ny.png",  // -Y (下)
+                "pz.png",  // +Z (前)
+                "nz.png"   // -Z (后)
+            };
+            g_specularReflectionTexture = loadCubemapFromImageFiles(specularFaces);
+            if (g_specularReflectionTexture == 0) {
+                __android_log_print(ANDROID_LOG_WARN, TAG, "Failed to load specular reflection cubemap, using fallback");
+                //g_specularReflectionTexture = generateFallbackTexture();
+            }
+        }
+        
+        // BRDF LUT使用图像文件或生成
+        if (g_brdfLUTTexture == 0) {
+            g_brdfLUTTexture = loadImageTexture("brdf_lut.png", GL_TEXTURE_2D);
+            if (g_brdfLUTTexture == 0) {
+                __android_log_print(ANDROID_LOG_INFO, TAG, "BRDF LUT image not found, generating one");
+                g_brdfLUTTexture = generateBRDFLUT();
+            }
+        }
     }
 
     JNIEXPORT void JNICALL
@@ -1095,7 +1353,7 @@ extern "C" {
             
             // 设置材质参数（改进的材质设置）
             if (uBaseColorFactorLocation >= 0) {
-                glUniform4f(uBaseColorFactorLocation, 0.60533f, 0.60533f, 0.60533f, 1.0f); // 适中的灰白色
+                glUniform4f(uBaseColorFactorLocation, 0.0f, 0.0f, 0.0f, 1.0f); // 适中的灰白色
             }
             if (uMetallicFactorLocation >= 0) {
                 glUniform1f(uMetallicFactorLocation, 0.15695f); // 增加金属感以获得更好的反射
@@ -1120,6 +1378,28 @@ extern "C" {
             }
             if (uSpecularColorFactorLocation >= 0) {
                 glUniform3f(uSpecularColorFactorLocation, 1.0f, 1.0f, 1.0f); // 镜面反射颜色
+            }
+            
+            // 绑定IBL纹理
+            if (g_diffuseIrradianceTexture > 0 && uDiffuseIrradianceMapLocation >= 0) {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_CUBE_MAP, g_diffuseIrradianceTexture);
+                glUniform1i(uDiffuseIrradianceMapLocation, 0);
+                __android_log_print(ANDROID_LOG_INFO, TAG, "Bound diffuse irradiance texture (ID: %d)", g_diffuseIrradianceTexture);
+            }
+            
+            if (g_specularReflectionTexture > 0 && uSpecularReflectionMapLocation >= 0) {
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_CUBE_MAP, g_specularReflectionTexture);
+                glUniform1i(uSpecularReflectionMapLocation, 1);
+                __android_log_print(ANDROID_LOG_INFO, TAG, "Bound specular reflection texture (ID: %d)", g_specularReflectionTexture);
+            }
+            
+            if (g_brdfLUTTexture > 0 && uBRDFLUTMapLocation >= 0) {
+                glActiveTexture(GL_TEXTURE2);
+                glBindTexture(GL_TEXTURE_2D, g_brdfLUTTexture);
+                glUniform1i(uBRDFLUTMapLocation, 2);
+                __android_log_print(ANDROID_LOG_INFO, TAG, "Bound BRDF LUT texture (ID: %d)", g_brdfLUTTexture);
             }
             
             // Set up vertex attributes

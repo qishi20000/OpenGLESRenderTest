@@ -6,6 +6,9 @@ project("triangle_renderer")
 # 添加对C++14的支持
 set(CMAKE_CXX_STANDARD 14)
 
+# stb_image是单头文件库，不需要查找外部依赖
+# 只需要确保stb_image.h在包含路径中
+
 add_library(
     triangle_renderer
     SHARED
@@ -20,7 +23,13 @@ find_library(
     GLESv3-lib
     GLESv3)
 
-# 链接库
+# 设置包含目录
+target_include_directories(triangle_renderer PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# 链接基础库（stb_image不需要链接）
 target_link_libraries(
     triangle_renderer
     ${log-lib}
