@@ -846,8 +846,8 @@ extern "C" {
         float deltaY = y - lastTouchY;
         
         // 根据滑动距离更新旋转角度 - 调整灵敏度
-        rotationY += deltaX * 0.005f; // 水平滑动控制Y轴旋转，降低灵敏度
-        rotationX += deltaY * 0.005f; // 垂直滑动控制X轴旋转，降低灵敏度
+        rotationY += deltaX * 0.01f; // 水平滑动控制Y轴旋转
+        rotationX += deltaY * 0.01f; // 垂直滑动控制X轴旋转
         
         // 限制X轴旋转角度
         if (rotationX > M_PI / 2) rotationX = M_PI / 2;
@@ -957,23 +957,27 @@ extern "C" {
             float projectionMatrix[16];
             float mvpMatrix[16];
             
-            // 创建模型矩阵（旋转 + 缩放）
-            createRotationMatrix(modelMatrix, rotationX, rotationY);
+            // 创建模型矩阵（先缩放，再旋转，确保围绕中心点旋转）
+            createIdentityMatrix(modelMatrix);
             
-            // 添加缩放矩阵使模型更大
+            // 1. 先应用缩放
             float scaleMatrix[16];
             createIdentityMatrix(scaleMatrix);
             scaleMatrix[0] = 20.0f;  // X轴缩放
             scaleMatrix[5] = 20.0f;  // Y轴缩放
             scaleMatrix[10] = 20.0f; // Z轴缩放
             
-            // 组合旋转和缩放矩阵
+            // 2. 再应用旋转
+            float rotationMatrix[16];
+            createRotationMatrix(rotationMatrix, rotationX, rotationY);
+            
+            // 3. 组合矩阵：Model = Rotation * Scale
             float tempMatrix[16];
             for (int i = 0; i < 4; i++) {
                 for (int j = 0; j < 4; j++) {
                     tempMatrix[i * 4 + j] = 0.0f;
                     for (int k = 0; k < 4; k++) {
-                        tempMatrix[i * 4 + j] += modelMatrix[i * 4 + k] * scaleMatrix[k * 4 + j];
+                        tempMatrix[i * 4 + j] += rotationMatrix[i * 4 + k] * scaleMatrix[k * 4 + j];
                     }
                 }
             }
