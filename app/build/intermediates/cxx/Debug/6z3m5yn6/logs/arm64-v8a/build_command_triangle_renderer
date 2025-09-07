@@ -1,4 +1,0 @@
-/opt/homebrew/bin/ninja \
-  -C \
-  /Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/.cxx/Debug/6z3m5yn6/arm64-v8a \
-  triangle_renderer

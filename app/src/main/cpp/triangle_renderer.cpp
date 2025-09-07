@@ -4,6 +4,7 @@
 #include <GLES3/gl3ext.h>
 #include <stdlib.h>  // 添加此头文件以使用malloc和free
 #include <math.h>
+#include <string.h>  // 添加此头文件以使用memcpy
 
 static const char* TAG = "OpenGLESTriangle";
 
@@ -11,163 +12,500 @@ static const char* TAG = "OpenGLESTriangle";
 static const char* vertexShaderCode = R"(
         #version 300 es
         layout(location = 0) in vec3 aPosition;
-        out vec3 vNormal;
-        out vec3 vWorldPos;
+        layout(location = 1) in vec3 aNormal;
+        layout(location = 2) in vec2 aUV0;
+        
+        uniform mat4 uModelMatrix;
+        uniform mat4 uViewMatrix;
+        uniform mat4 uProjectionMatrix;
+        
+        out vec3 vWorldPosition;
+        out vec3 vWorldNormal;
+        out vec2 vUV0;
+        out vec4 vPosition;
+        
         void main() {
-          vNormal = normalize(aPosition);
-          vWorldPos = aPosition;
-          gl_Position = vec4(aPosition, 1.0);
+          vec4 worldPos = uModelMatrix * vec4(aPosition, 1.0);
+          vWorldPosition = worldPos.xyz;
+          vWorldNormal = mat3(uModelMatrix) * aNormal;
+          vUV0 = aUV0;
+          
+          vec4 viewPos = uViewMatrix * worldPos;
+          vPosition = uProjectionMatrix * viewPos;
+          gl_Position = vPosition;
         }
         )";
 
 static const char* fragmentShaderCode = R"(
         #version 300 es
         precision mediump float;
-        in vec3 vNormal;
-        in vec3 vWorldPos;
         
-        // Directional light
-        uniform vec3 uLightDir;           // light direction (towards light)
-        uniform vec3 uLightColor;         // light color (RGB)
-        uniform float uLightIntensity;    // scalar intensity
+        in vec3 vWorldPosition;
+        in vec3 vWorldNormal;
+        in vec2 vUV0;
+        in vec4 vPosition;
         
-        // Camera
-        uniform vec3 uCameraPos;          // camera position in world space
+        // 光照参数
+        uniform vec3 uCameraPosition;
+        uniform vec3 uLightDirection;
+        uniform vec4 uLightColorIntensity;
         
-        // PBR material params
-        uniform vec3 uBaseColor;          // base color / albedo
-        uniform float uMetallic;          // [0,1]
-        uniform float uRoughness;         // [0.04,1]
-        uniform float uAmbientOcclusion;  // [0,1]
-        
-        // Clearcoat (second specular lobe similar to Filament)
-        uniform float uClearcoat;         // [0,1]
-        uniform float uClearcoatRoughness;// [0,1]
+        // 材质参数（按照 Filament 标准）
+        uniform vec4 uBaseColorFactor;
+        uniform float uMetallicFactor;
+        uniform float uRoughnessFactor;
+        uniform float uNormalScale;
+        uniform float uAOStrength;
+        uniform vec3 uEmissiveFactor;
+        uniform float uEmissiveStrength;
+        uniform float uSpecularStrength;
+        uniform vec3 uSpecularColorFactor;
         
         out vec4 fragColor;
         
-        // Schlick Fresnel approximation
-        vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-          return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+        const float PI = 3.14159265359;
+        const float MIN_PERCEPTUAL_ROUGHNESS = 0.089;
+        const float MIN_ROUGHNESS = 0.007921;
+        const float MIN_N_DOT_V = 1e-4;
+        
+        // Filament 工具函数
+        float saturate(float x) {
+          return clamp(x, 0.0, 1.0);
         }
         
-        float distributionGGX(float NdotH, float alpha) {
-          float a2 = alpha * alpha;
-          float denom = (NdotH * NdotH) * (a2 - 1.0) + 1.0;
-          return a2 / (3.14159265 * denom * denom);
+        vec3 saturate(vec3 x) {
+          return clamp(x, 0.0, 1.0);
         }
         
-        float geometrySmithGGX(float NdotV, float NdotL, float alpha) {
-          // Schlick-GGX masking-shadowing approximation
-          float k = (alpha + 1.0);
-          k = (k * k) / 8.0;
-          float gV = NdotV / (NdotV * (1.0 - k) + k);
-          float gL = NdotL / (NdotL * (1.0 - k) + k);
-          return gV * gL;
+        float pow5(float x) {
+          float x2 = x * x;
+          return x2 * x2 * x;
+        }
+        
+        // 简单的 PBR 函数
+        vec3 computeDiffuseColor(const vec4 baseColor, float metallic) {
+          return baseColor.rgb * (1.0 - metallic);
+        }
+        
+        vec3 computeF0(const vec4 baseColor, float metallic, float reflectance) {
+          return baseColor.rgb * metallic + (reflectance * (1.0 - metallic));
+        }
+        
+        float computeDielectricF0(float reflectance) {
+          return 0.16 * reflectance * reflectance;
+        }
+        
+        // Filament 精确的 BRDF 函数实现
+        float D_GGX(float roughness, float NoH, const vec3 h) {
+          // Filament 的精确 GGX 实现，包括移动端优化
+          float a = NoH * roughness;
+          float k = roughness / (1.0 - NoH * NoH + a * a);
+          float d = k * k * (1.0 / PI);
+          return clamp(d, 0.0, 65504.0);
+        }
+        
+        float V_SmithGGXCorrelated(float roughness, float NoV, float NoL) {
+          // Filament 的 Smith GGX 相关实现 - Heitz 2014
+          float a2 = roughness * roughness;
+          float lambdaV = NoL * sqrt((NoV - a2 * NoV) * NoV + a2);
+          float lambdaL = NoV * sqrt((NoL - a2 * NoL) * NoL + a2);
+          float v = 0.5 / (lambdaV + lambdaL);
+          return clamp(v, 0.0, 65504.0);
+        }
+        
+        vec3 F_Schlick(const vec3 f0, float f90, float VoH) {
+          // Filament 的 Schlick Fresnel 实现 - Schlick 1994
+          return f0 + (f90 - f0) * pow5(1.0 - VoH);
+        }
+        
+        vec3 F_Schlick(const vec3 f0, float VoH) {
+          // Filament 的简化 Schlick Fresnel (f90 = 1.0)
+          float f = pow5(1.0 - VoH);
+          return f + f0 * (1.0 - f);
+        }
+        
+        // Filament 的漫反射 BRDF
+        float Fd_Lambert() {
+          return 1.0 / PI;
+        }
+        
+        float Fd_Burley(float roughness, float NoV, float NoL, float LoH) {
+          // Filament 的 Burley 漫反射实现 - Disney 2012
+          float f90 = 0.5 + 2.0 * roughness * LoH * LoH;
+          float lightScatter = F_Schlick(vec3(1.0), f90, NoL).r;
+          float viewScatter = F_Schlick(vec3(1.0), f90, NoV).r;
+          return lightScatter * viewScatter * (1.0 / PI);
+        }
+        
+        // Filament 的 DFG 预计算项（改进的近似）
+        vec3 prefilteredDFG(float perceptualRoughness, float NoV) {
+          // 改进的 DFG 近似，更接近 Filament 的 LUT
+          float roughness = perceptualRoughness * perceptualRoughness;
+          vec3 f0 = vec3(0.04);
+          float f90 = 1.0;
+          
+          // 更准确的 DFG 近似
+          float F = F_Schlick(f0, f90, NoV).r;
+          float G = 1.0 / (4.0 * NoV + 0.1); // 简化的几何项
+          float D = 1.0 / (roughness * roughness + 0.1); // 简化的分布项
+          
+          return vec3(F, G, D);
+        }
+        
+        // IBL 漫反射辐照度（改进版本）
+        vec3 diffuseIrradiance(vec3 normal) {
+          // 改进的环境光照，模拟球谐函数的效果
+          float NdotY = normal.y;
+          float NdotX = normal.x;
+          float NdotZ = normal.z;
+          
+          // 简化的球谐函数近似 - 降低环境光强度以获得更好的明暗对比
+          vec3 color = vec3(0.08, 0.08, 0.08); // 基础环境色 - 降低强度
+          color += vec3(0.05, 0.05, 0.05) * NdotY; // 垂直渐变
+          color += vec3(0.02, 0.02, 0.02) * NdotX; // 水平渐变
+          color += vec3(0.01, 0.01, 0.01) * NdotZ; // 深度渐变
+          
+          return color;
+        }
+        
+        // IBL 镜面反射（改进版本）
+        vec3 prefilteredRadiance(vec3 reflection, float perceptualRoughness) {
+          // 改进的镜面反射，模拟预过滤环境贴图
+          float roughness = perceptualRoughness * perceptualRoughness;
+          float lod = roughness * 6.0; // 更准确的 LOD 计算
+          
+          // 基于反射方向的颜色变化 - 降低强度以获得更好的明暗对比
+          vec3 baseColor = vec3(0.15, 0.15, 0.15); // 降低基础反射强度
+          float fresnel = pow(1.0 - max(dot(reflection, vec3(0.0, 1.0, 0.0)), 0.0), 2.0);
+          vec3 color = mix(baseColor, vec3(0.4, 0.4, 0.4), fresnel); // 降低高光强度
+          
+          // 基于粗糙度的衰减
+          float attenuation = 1.0 - roughness;
+          return color * attenuation;
+        }
+        
+        // 计算镜面反射的 DFG 项（Filament 标准）
+        vec3 specularDFG(vec3 f0, vec3 dfg) {
+          return mix(dfg.xxx, dfg.yyy, f0);
         }
         
         void main() {
-          // Normal, Light, View, Half
-          vec3 N = normalize(vNormal);
-          vec3 L = normalize(uLightDir);
-          vec3 V = normalize(uCameraPos - vWorldPos);
+          // 获取材质参数（按照 Filament 标准）
+          vec4 baseColor = uBaseColorFactor;
+          float metallic = uMetallicFactor;
+          float roughness = uRoughnessFactor;
+          float ao = uAOStrength;
+          vec3 emissive = uEmissiveFactor * uEmissiveStrength;
+          float specularStrength = uSpecularStrength;
+          vec3 specularColorFactor = uSpecularColorFactor;
+          
+          // Filament 的精确值限制
+          const float MIN_PERCEPTUAL_ROUGHNESS = 0.089;
+          const float MIN_ROUGHNESS = 0.007921;
+          const float MIN_N_DOT_V = 1e-4;
+          
+          // 限制值范围（按照 Filament 标准）
+          float perceptualRoughness = saturate(roughness);
+          perceptualRoughness = max(perceptualRoughness, MIN_PERCEPTUAL_ROUGHNESS);
+          roughness = max(perceptualRoughness * perceptualRoughness, MIN_ROUGHNESS);
+          metallic = saturate(metallic);
+          ao = saturate(ao);
+          
+          // 计算光照向量
+          vec3 N = normalize(vWorldNormal);
+          vec3 V = normalize(uCameraPosition - vWorldPosition);
+          vec3 L = normalize(-uLightDirection);
           vec3 H = normalize(V + L);
           
-          float NdotL = max(dot(N, L), 0.0);
-          float NdotV = max(dot(N, V), 1e-4);
-          float NdotH = max(dot(N, H), 0.0);
-          float VdotH = max(dot(V, H), 0.0);
+          float NoV = max(dot(N, V), MIN_N_DOT_V);
+          float NoL = saturate(dot(N, L));
+          float NoH = saturate(dot(N, H));
+          float VoH = saturate(dot(V, H));
+          float LoH = saturate(dot(L, H));
           
-          // Base reflectance F0
-          vec3 dielectricF0 = vec3(0.04);
-          vec3 F0 = mix(dielectricF0, uBaseColor, uMetallic);
+          // 计算 F0（按照 Filament 标准，包括 specular 参数）
+          float reflectance = computeDielectricF0(0.5);
+          vec3 dielectricSpecularF0 = min(reflectance * specularColorFactor, vec3(1.0)) * specularStrength;
+          vec3 f0 = baseColor.rgb * metallic + dielectricSpecularF0 * (1.0 - metallic);
+          float f90 = 1.0; // Filament 标准
           
-          float alpha = max(uRoughness * uRoughness, 1e-4);
+          // 镜面反射 BRDF（使用 Filament 的精确实现）
+          float D = D_GGX(roughness, NoH, H);
+          float V_brdf = V_SmithGGXCorrelated(roughness, NoV, NoL);
+          vec3 F = F_Schlick(f0, f90, VoH);
           
-          // Cook-Torrance BRDF
-          float D = distributionGGX(NdotH, alpha);
-          float G = geometrySmithGGX(NdotV, NdotL, alpha);
-          vec3  F = fresnelSchlick(VdotH, F0);
+          vec3 specular = (D * V_brdf) * F;
           
-          vec3 numerator = D * G * F;
-          float denom = 4.0 * NdotV * NdotL + 1e-4;
-          vec3 specular = numerator / denom;
+          // 漫反射 BRDF（使用 Filament 的 Burley 模型）
+          vec3 diffuseColor = computeDiffuseColor(baseColor, metallic);
+          float diffuse = Fd_Burley(roughness, NoV, NoL, LoH);
+          vec3 diffuseBRDF = diffuseColor * diffuse;
           
-          // Energy-conserving diffuse term
-          vec3 kS = F;                      // specular amount
-          vec3 kD = (vec3(1.0) - kS) * (1.0 - uMetallic);
-          vec3 diffuse = kD * uBaseColor / 3.14159265;
+          // 能量守恒（按照 Filament 标准）
+          vec3 kS = F;
+          vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+          diffuseBRDF *= kD;
           
-          // Clearcoat lobe (thin dielectric layer)
-          float ccAlpha = max(uClearcoatRoughness * uClearcoatRoughness, 1e-4);
-          float Dcc = distributionGGX(NdotH, ccAlpha);
-          float Gcc = geometrySmithGGX(NdotV, NdotL, ccAlpha);
-          float Fcc = fresnelSchlick(VdotH, vec3(0.04)).r; // scalar F for clearcoat
-          float ccDenom = 4.0 * NdotV * NdotL + 1e-4;
-          float clearcoatSpec = (Dcc * Gcc * Fcc) / ccDenom;
+          // 计算 DFG 项（用于能量补偿和 IBL）
+          vec3 dfg = prefilteredDFG(perceptualRoughness, NoV);
           
-          // Direct lighting
-          vec3 radiance = uLightColor * uLightIntensity;
-          vec3 direct = (diffuse + specular + uClearcoat * clearcoatSpec) * radiance * NdotL;
+          // 能量补偿（Filament 的多散射补偿）
+          vec3 energyCompensation = 1.0 + f0 * (1.0 / dfg.y - 1.0);
+          specular *= energyCompensation;
           
-          // Simple ambient (AO)
-          vec3 ambient = uBaseColor * 0.03 * uAmbientOcclusion; // small ambient term
+          // 直接光照
+          vec3 lightColor = uLightColorIntensity.rgb;
+          float lightIntensity = uLightColorIntensity.a;
+          vec3 radiance = lightColor * lightIntensity;
           
-          vec3 color = ambient + direct;
-          fragColor = vec4(color, 1.0);
+          vec3 directLighting = (diffuseBRDF + specular) * radiance * NoL;
+          
+          // IBL 计算（按照 Filament 标准）
+          vec3 E = specularDFG(f0, dfg);
+          
+          // 漫反射 IBL（改进的能量守恒）
+          vec3 diffuseIrradiance = diffuseIrradiance(N);
+          vec3 Fd_IBL = diffuseColor * diffuseIrradiance * (1.0 - E) * (1.0 / PI);
+          
+          // 镜面反射 IBL（改进的实现）
+          vec3 reflection = reflect(-V, N);
+          vec3 Fr_IBL = E * prefilteredRadiance(reflection, perceptualRoughness);
+          
+          // 应用环境光遮蔽
+          Fd_IBL *= ao;
+          Fr_IBL *= ao;
+          
+          // 组合光照（按照 Filament 标准）
+          vec3 color = Fd_IBL + Fr_IBL + directLighting;
+          
+          // 添加自发光（按照 Filament 标准）
+          color += emissive;
+          
+          // 调试：确保颜色不为零
+          if (length(color) < 0.01) {
+            color = vec3(0.1, 0.1, 0.1); // 最小可见颜色
+          }
+          
+          // 确保颜色在合理范围内
+          color = saturate(color);
+          
+          fragColor = vec4(color, baseColor.a);
         }
         )";
 
 static GLuint program = 0;
 static GLint positionHandle = 0;
-static GLint uLightDirLocation = -1;
-static GLint uLightColorLocation = -1;
-static GLint uLightIntensityLocation = -1;
-static GLint uCameraPosLocation = -1;
-static GLint uBaseColorLocation = -1;
-static GLint uMetallicLocation = -1;
-static GLint uRoughnessLocation = -1;
-static GLint uAOLocation = -1;
-static GLint uClearcoatLocation = -1;
-static GLint uClearcoatRoughnessLocation = -1;
+static GLint normalHandle = 0;
+static GLint uv0Handle = 0;
+
+// Matrix uniforms
+static GLint uModelMatrixLocation = -1;
+static GLint uViewMatrixLocation = -1;
+static GLint uProjectionMatrixLocation = -1;
+static GLint uNormalMatrixLocation = -1;
+
+// Frame uniforms
+static GLint uCameraPositionLocation = -1;
+static GLint uLightDirectionLocation = -1;
+static GLint uLightColorIntensityLocation = -1;
+static GLint uExposureLocation = -1;
+static GLint uIBLLuminanceLocation = -1;
+
+// Material uniforms
+static GLint uBaseColorFactorLocation = -1;
+static GLint uMetallicFactorLocation = -1;
+static GLint uRoughnessFactorLocation = -1;
+static GLint uNormalScaleLocation = -1;
+static GLint uAOStrengthLocation = -1;
+static GLint uEmissiveFactorLocation = -1;
+static GLint uEmissiveStrengthLocation = -1;
+static GLint uSpecularStrengthLocation = -1;
+static GLint uSpecularColorFactorLocation = -1;
+
+// Texture uniforms
+static GLint uMetallicRoughnessMapLocation = -1;
+static GLint uOcclusionMapLocation = -1;
+
 GLuint vbo = 0;
 GLuint ibo = 0;
-GLsizei sphereIndexCount = 0;
+GLsizei hoodIndexCount = 0;
 
-// 生成球体网格（仅位置）
-static void generateSphereMesh(float radius, int stacks, int slices,
-                               GLfloat **outVertices, GLushort **outIndices,
-                               int *outVertexCount, int *outIndexCount) {
-    int vertexCount = (stacks + 1) * (slices + 1);
-    int indexCount = stacks * slices * 6;
+// 旋转相关变量
+static float rotationX = 0.0f;
+static float rotationY = 0.0f;
+static float lastTouchX = 0.0f;
+static float lastTouchY = 0.0f;
+static bool isTouching = false;
 
-    GLfloat *vertices = (GLfloat *)malloc(sizeof(GLfloat) * vertexCount * 3);
+// 矩阵计算函数
+static void createIdentityMatrix(float* matrix) {
+    memset(matrix, 0, 16 * sizeof(float));
+    matrix[0] = matrix[5] = matrix[10] = matrix[15] = 1.0f;
+}
+
+static void createRotationMatrix(float* matrix, float angleX, float angleY) {
+    createIdentityMatrix(matrix);
+    
+    // 绕X轴旋转
+    float cosX = cosf(angleX);
+    float sinX = sinf(angleX);
+    
+    // 绕Y轴旋转
+    float cosY = cosf(angleY);
+    float sinY = sinf(angleY);
+    
+    // 组合旋转矩阵 (Y * X)
+    matrix[0] = cosY;
+    matrix[2] = sinY;
+    matrix[5] = cosX * cosY;
+    matrix[6] = -sinX;
+    matrix[7] = cosX * sinY;
+    matrix[8] = sinX * cosY;
+    matrix[9] = cosX;
+    matrix[10] = sinX * sinY;
+}
+
+static void createPerspectiveMatrix(float* matrix, float fov, float aspect, float near, float far) {
+    float f = 1.0f / tanf(fov * 0.5f * M_PI / 180.0f);
+    float rangeInv = 1.0f / (near - far);
+    
+    createIdentityMatrix(matrix);
+    matrix[0] = f / aspect;
+    matrix[5] = f;
+    matrix[10] = (near + far) * rangeInv;
+    matrix[11] = -1.0f;
+    matrix[14] = near * far * rangeInv * 2.0f;
+    matrix[15] = 0.0f;
+}
+
+static void createViewMatrix(float* matrix, float eyeX, float eyeY, float eyeZ, 
+                            float centerX, float centerY, float centerZ,
+                            float upX, float upY, float upZ) {
+    // 计算前向量
+    float fx = centerX - eyeX;
+    float fy = centerY - eyeY;
+    float fz = centerZ - eyeZ;
+    float length = sqrtf(fx * fx + fy * fy + fz * fz);
+    fx /= length; fy /= length; fz /= length;
+    
+    // 计算右向量
+    float rx = fy * upZ - fz * upY;
+    float ry = fz * upX - fx * upZ;
+    float rz = fx * upY - fy * upX;
+    length = sqrtf(rx * rx + ry * ry + rz * rz);
+    rx /= length; ry /= length; rz /= length;
+    
+    // 重新计算上向量
+    float ux = ry * fz - rz * fy;
+    float uy = rz * fx - rx * fz;
+    float uz = rx * fy - ry * fx;
+    
+    createIdentityMatrix(matrix);
+    matrix[0] = rx; matrix[1] = ry; matrix[2] = rz;
+    matrix[4] = ux; matrix[5] = uy; matrix[6] = uz;
+    matrix[8] = -fx; matrix[9] = -fy; matrix[10] = -fz;
+    matrix[12] = -(rx * eyeX + ry * eyeY + rz * eyeZ);
+    matrix[13] = -(ux * eyeX + uy * eyeY + uz * eyeZ);
+    matrix[14] = -(-fx * eyeX - fy * eyeY - fz * eyeZ);
+}
+
+// 生成汽车引擎盖网格（位置、法线、UV）
+static void generateHoodMesh(float width, float length, float height, int widthSegments, int lengthSegments,
+                             GLfloat **outVertices, GLushort **outIndices,
+                             int *outVertexCount, int *outIndexCount) {
+    int vertexCount = (widthSegments + 1) * (lengthSegments + 1);
+    int indexCount = widthSegments * lengthSegments * 6;
+
+    // 每个顶点包含：位置(3) + 法线(3) + UV(2) = 8个float
+    GLfloat *vertices = (GLfloat *)malloc(sizeof(GLfloat) * vertexCount * 8);
     GLushort *indices = (GLushort *)malloc(sizeof(GLushort) * indexCount);
 
-    int v = 0;
-    for (int i = 0; i <= stacks; ++i) {
-        float vRatio = (float)i / (float)stacks;
-        float phi = (float)M_PI * vRatio;    // 0..PI
-        float y = cosf(phi);
-        float r = sinf(phi);
-
-        for (int j = 0; j <= slices; ++j) {
-            float uRatio = (float)j / (float)slices;
-            float theta = 2.0f * (float)M_PI * uRatio; // 0..2PI
-            float x = r * cosf(theta);
-            float z = r * sinf(theta);
-
-            vertices[v++] = radius * x;
-            vertices[v++] = radius * y;
-            vertices[v++] = radius * z;
+    int vertexIndex = 0;
+    for (int i = 0; i <= widthSegments; ++i) {
+        float u = (float)i / (float)widthSegments; // 0..1
+        float x = (u - 0.5f) * width; // -width/2 .. width/2
+        
+        for (int j = 0; j <= lengthSegments; ++j) {
+            float v = (float)j / (float)lengthSegments; // 0..1
+            float z = (v - 0.5f) * length; // -length/2 .. length/2
+            
+            // 计算引擎盖的高度 - 创建椭圆形凹陷
+            float distanceFromCenter = sqrtf(x * x / (width * width * 0.25f) + z * z / (length * length * 0.25f));
+            float hoodHeight = height * (1.0f - distanceFromCenter * 0.3f); // 中心凹陷
+            
+            // 添加边缘圆滑过渡
+            if (distanceFromCenter > 0.8f) {
+                hoodHeight *= (1.0f - distanceFromCenter) * 5.0f; // 边缘逐渐降低
+            }
+            
+            // 添加一些随机的不规则性，模拟真实引擎盖
+            float noise = sinf(x * 0.1f) * cosf(z * 0.1f) * 0.02f;
+            hoodHeight += noise;
+            
+            // 位置
+            vertices[vertexIndex++] = x;
+            vertices[vertexIndex++] = hoodHeight;
+            vertices[vertexIndex++] = z;
+            
+            // 计算法线 - 通过相邻顶点计算
+            float epsilon = 0.01f;
+            float h1, h2, h3, h4;
+            
+            // 计算相邻点的高度
+            float x1 = x + epsilon, z1 = z;
+            float x2 = x - epsilon, z2 = z;
+            float x3 = x, z3 = z + epsilon;
+            float x4 = x, z4 = z - epsilon;
+            
+            // 重新计算高度
+            float d1 = sqrtf(x1 * x1 / (width * width * 0.25f) + z1 * z1 / (length * length * 0.25f));
+            h1 = height * (1.0f - d1 * 0.3f);
+            if (d1 > 0.8f) h1 *= (1.0f - d1) * 5.0f;
+            h1 += sinf(x1 * 0.1f) * cosf(z1 * 0.1f) * 0.02f;
+            
+            float d2 = sqrtf(x2 * x2 / (width * width * 0.25f) + z2 * z2 / (length * length * 0.25f));
+            h2 = height * (1.0f - d2 * 0.3f);
+            if (d2 > 0.8f) h2 *= (1.0f - d2) * 5.0f;
+            h2 += sinf(x2 * 0.1f) * cosf(z2 * 0.1f) * 0.02f;
+            
+            float d3 = sqrtf(x3 * x3 / (width * width * 0.25f) + z3 * z3 / (length * length * 0.25f));
+            h3 = height * (1.0f - d3 * 0.3f);
+            if (d3 > 0.8f) h3 *= (1.0f - d3) * 5.0f;
+            h3 += sinf(x3 * 0.1f) * cosf(z3 * 0.1f) * 0.02f;
+            
+            float d4 = sqrtf(x4 * x4 / (width * width * 0.25f) + z4 * z4 / (length * length * 0.25f));
+            h4 = height * (1.0f - d4 * 0.3f);
+            if (d4 > 0.8f) h4 *= (1.0f - d4) * 5.0f;
+            h4 += sinf(x4 * 0.1f) * cosf(z4 * 0.1f) * 0.02f;
+            
+            // 计算法线向量
+            float nx = (h1 - h2) / (2.0f * epsilon);
+            float nz = (h3 - h4) / (2.0f * epsilon);
+            float ny = 1.0f;
+            
+            // 归一化法线
+            float length = sqrtf(nx * nx + ny * ny + nz * nz);
+            if (length > 0.0f) {
+                nx /= length;
+                ny /= length;
+                nz /= length;
+            }
+            
+            vertices[vertexIndex++] = nx;
+            vertices[vertexIndex++] = ny;
+            vertices[vertexIndex++] = nz;
+            
+            // UV坐标
+            vertices[vertexIndex++] = u;
+            vertices[vertexIndex++] = v;
         }
     }
 
     int idx = 0;
-    for (int i = 0; i < stacks; ++i) {
-        for (int j = 0; j < slices; ++j) {
-            int row1 = i * (slices + 1);
-            int row2 = (i + 1) * (slices + 1);
+    for (int i = 0; i < widthSegments; ++i) {
+        for (int j = 0; j < lengthSegments; ++j) {
+            int row1 = i * (lengthSegments + 1);
+            int row2 = (i + 1) * (lengthSegments + 1);
 
             GLushort a = (GLushort)(row1 + j);
             GLushort b = (GLushort)(row2 + j);
@@ -205,6 +543,8 @@ static GLuint loadShader(GLenum type, const char* shaderCode) {
         }
         glDeleteShader(shader);
         return 0;
+    } else {
+        __android_log_print(ANDROID_LOG_INFO, TAG, "Shader compiled successfully");
     }
     
     return shader;
@@ -262,17 +602,30 @@ static void createProgram() {
         return;
     }
     
+    // Get attribute locations
     positionHandle = glGetAttribLocation(program, "aPosition");
-    uLightDirLocation = glGetUniformLocation(program, "uLightDir");
-    uLightColorLocation = glGetUniformLocation(program, "uLightColor");
-    uLightIntensityLocation = glGetUniformLocation(program, "uLightIntensity");
-    uCameraPosLocation = glGetUniformLocation(program, "uCameraPos");
-    uBaseColorLocation = glGetUniformLocation(program, "uBaseColor");
-    uMetallicLocation = glGetUniformLocation(program, "uMetallic");
-    uRoughnessLocation = glGetUniformLocation(program, "uRoughness");
-    uAOLocation = glGetUniformLocation(program, "uAmbientOcclusion");
-    uClearcoatLocation = glGetUniformLocation(program, "uClearcoat");
-    uClearcoatRoughnessLocation = glGetUniformLocation(program, "uClearcoatRoughness");
+    normalHandle = glGetAttribLocation(program, "aNormal");
+    uv0Handle = glGetAttribLocation(program, "aUV0");
+    
+    // 获取矩阵 uniform 变量位置
+    uModelMatrixLocation = glGetUniformLocation(program, "uModelMatrix");
+    uViewMatrixLocation = glGetUniformLocation(program, "uViewMatrix");
+    uProjectionMatrixLocation = glGetUniformLocation(program, "uProjectionMatrix");
+    uNormalMatrixLocation = glGetUniformLocation(program, "uNormalMatrix");
+    
+    // 获取 uniform 变量位置（按照 Filament 标准）
+    uCameraPositionLocation = glGetUniformLocation(program, "uCameraPosition");
+    uLightDirectionLocation = glGetUniformLocation(program, "uLightDirection");
+    uLightColorIntensityLocation = glGetUniformLocation(program, "uLightColorIntensity");
+    uBaseColorFactorLocation = glGetUniformLocation(program, "uBaseColorFactor");
+    uMetallicFactorLocation = glGetUniformLocation(program, "uMetallicFactor");
+    uRoughnessFactorLocation = glGetUniformLocation(program, "uRoughnessFactor");
+    uNormalScaleLocation = glGetUniformLocation(program, "uNormalScale");
+    uAOStrengthLocation = glGetUniformLocation(program, "uAOStrength");
+    uEmissiveFactorLocation = glGetUniformLocation(program, "uEmissiveFactor");
+    uEmissiveStrengthLocation = glGetUniformLocation(program, "uEmissiveStrength");
+    uSpecularStrengthLocation = glGetUniformLocation(program, "uSpecularStrength");
+    uSpecularColorFactorLocation = glGetUniformLocation(program, "uSpecularColorFactor");
     
     // Clean up shaders as they're linked into our program now and no longer necessary
     glDeleteShader(vertexShader);
@@ -280,27 +633,63 @@ static void createProgram() {
 }
 
 extern "C" {
+    // 触摸事件处理函数
+    JNIEXPORT void JNICALL
+    Java_com_example_openglestriangle_TriangleRenderer_onTouchDown(JNIEnv *env, jclass clazz, jfloat x, jfloat y) {
+        lastTouchX = x;
+        lastTouchY = y;
+        isTouching = true;
+        __android_log_print(ANDROID_LOG_INFO, TAG, "Touch down: %f, %f", x, y);
+    }
+    
+    JNIEXPORT void JNICALL
+    Java_com_example_openglestriangle_TriangleRenderer_onTouchMove(JNIEnv *env, jclass clazz, jfloat x, jfloat y) {
+        if (!isTouching) return;
+        
+        float deltaX = x - lastTouchX;
+        float deltaY = y - lastTouchY;
+        
+        // 根据滑动距离更新旋转角度
+        rotationY += deltaX * 0.01f; // 水平滑动控制Y轴旋转
+        rotationX += deltaY * 0.01f; // 垂直滑动控制X轴旋转
+        
+        // 限制X轴旋转角度
+        if (rotationX > M_PI / 2) rotationX = M_PI / 2;
+        if (rotationX < -M_PI / 2) rotationX = -M_PI / 2;
+        
+        lastTouchX = x;
+        lastTouchY = y;
+        
+        __android_log_print(ANDROID_LOG_INFO, TAG, "Touch move: rotationX=%f, rotationY=%f", rotationX, rotationY);
+    }
+    
+    JNIEXPORT void JNICALL
+    Java_com_example_openglestriangle_TriangleRenderer_onTouchUp(JNIEnv *env, jclass clazz) {
+        isTouching = false;
+        __android_log_print(ANDROID_LOG_INFO, TAG, "Touch up");
+    }
+
     JNIEXPORT void JNICALL
     Java_com_example_openglestriangle_TriangleRenderer_init(JNIEnv *env, jclass clazz) {
         __android_log_print(ANDROID_LOG_INFO, TAG, "Initializing TriangleRenderer");
         createProgram();
-        // 创建球体网格并上传到GPU
+        // 创建引擎盖网格并上传到GPU
         if (vbo == 0 || ibo == 0) {
             GLfloat *vertices = NULL;
             GLushort *indices = NULL;
             int vertexCount = 0;
             int indexCount = 0;
-            generateSphereMesh(0.7f, 40, 40, &vertices, &indices, &vertexCount, &indexCount);
+            generateHoodMesh(1.4f, 2.0f, 0.3f, 50, 50, &vertices, &indices, &vertexCount, &indexCount);
 
             if (vbo == 0) glGenBuffers(1, &vbo);
             glBindBuffer(GL_ARRAY_BUFFER, vbo);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * vertexCount * 3, vertices, GL_STATIC_DRAW);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * vertexCount * 8, vertices, GL_STATIC_DRAW);
 
             if (ibo == 0) glGenBuffers(1, &ibo);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLushort) * indexCount, indices, GL_STATIC_DRAW);
 
-            sphereIndexCount = (GLsizei)indexCount;
+            hoodIndexCount = (GLsizei)indexCount;
 
             if (vertices) free(vertices);
             if (indices) free(indices);
@@ -317,7 +706,7 @@ extern "C" {
     JNIEXPORT void JNICALL
     Java_com_example_openglestriangle_TriangleRenderer_surfaceChanged(JNIEnv *env, jclass clazz, jint width, jint height) {
         __android_log_print(ANDROID_LOG_INFO, TAG, "Surface changed: %d x %d", width, height);
-        glViewport(0, 500, width, width);
+        glViewport(0, 0, width, height);
     }
 
     JNIEXPORT void JNICALL
@@ -325,25 +714,91 @@ extern "C" {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (program) {
             glUseProgram(program);
-            // 光照与相机
-            if (uLightDirLocation >= 0) glUniform3f(uLightDirLocation, 0.5f, 1.0f, -1.3f);
-            if (uLightColorLocation >= 0) glUniform3f(uLightColorLocation, 1.0f, 1.0f, 1.0f);
-            if (uLightIntensityLocation >= 0) glUniform1f(uLightIntensityLocation, 2.5f);
-            if (uCameraPosLocation >= 0) glUniform3f(uCameraPosLocation, 0.0f, 0.0f, 3.0f);
-
-            // 车漆风格 PBR 参数（类似 Filament 思路：介电基底 + clearcoat）
-            if (uBaseColorLocation >= 0) glUniform3f(uBaseColorLocation, 0.7f, 0.05f, 0.05f);
-            if (uMetallicLocation >= 0) glUniform1f(uMetallicLocation, 0.0f);
-            if (uRoughnessLocation >= 0) glUniform1f(uRoughnessLocation, 0.2f);
-            if (uAOLocation >= 0) glUniform1f(uAOLocation, 1.0f);
-            if (uClearcoatLocation >= 0) glUniform1f(uClearcoatLocation, 1.0f);
-            if (uClearcoatRoughnessLocation >= 0) glUniform1f(uClearcoatRoughnessLocation, 0.1f);
+            
+            __android_log_print(ANDROID_LOG_INFO, TAG, "Drawing frame with PBR shader");
+            
+            // 创建变换矩阵
+            float modelMatrix[16];
+            float viewMatrix[16];
+            float projectionMatrix[16];
+            float mvpMatrix[16];
+            
+            // 创建模型矩阵（旋转）
+            createRotationMatrix(modelMatrix, rotationX, rotationY);
+            
+            // 创建视图矩阵
+            createViewMatrix(viewMatrix, 0.0f, 0.0f, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+            
+            // 创建投影矩阵
+            createPerspectiveMatrix(projectionMatrix, 45.0f, 1.0f, 0.1f, 100.0f);
+            
+            // 设置矩阵uniform
+            if (uModelMatrixLocation >= 0) {
+                glUniformMatrix4fv(uModelMatrixLocation, 1, GL_FALSE, modelMatrix);
+            }
+            if (uViewMatrixLocation >= 0) {
+                glUniformMatrix4fv(uViewMatrixLocation, 1, GL_FALSE, viewMatrix);
+            }
+            if (uProjectionMatrixLocation >= 0) {
+                glUniformMatrix4fv(uProjectionMatrixLocation, 1, GL_FALSE, projectionMatrix);
+            }
+            
+            // 设置光照参数 - 调整以获得更好的明暗对比
+            if (uCameraPositionLocation >= 0) {
+                glUniform3f(uCameraPositionLocation, 0.0f, 0.0f, 2.5f); // 稍微靠近一点
+            }
+            if (uLightDirectionLocation >= 0) {
+                glUniform3f(uLightDirectionLocation, 0.3f, 0.8f, -0.5f); // 调整光照方向以获得更好的阴影
+            }
+            if (uLightColorIntensityLocation >= 0) {
+                glUniform4f(uLightColorIntensityLocation, 1.0f, 1.0f, 1.0f, 2.0f); // 降低光照强度
+            }
+            
+            // 设置材质参数（改进的材质设置）
+            if (uBaseColorFactorLocation >= 0) {
+                glUniform4f(uBaseColorFactorLocation, 0.6f, 0.6f, 0.6f, 1.0f); // 适中的灰白色
+            }
+            if (uMetallicFactorLocation >= 0) {
+                glUniform1f(uMetallicFactorLocation, 0.3f); // 增加金属感以获得更好的反射
+            }
+            if (uRoughnessFactorLocation >= 0) {
+                glUniform1f(uRoughnessFactorLocation, 0.2f); // 稍微降低粗糙度以获得更清晰的高光
+            }
+            if (uNormalScaleLocation >= 0) {
+                glUniform1f(uNormalScaleLocation, 1.0f); // 法线强度
+            }
+            if (uAOStrengthLocation >= 0) {
+                glUniform1f(uAOStrengthLocation, 1.0f); // 环境光遮蔽
+            }
+            if (uEmissiveFactorLocation >= 0) {
+                glUniform3f(uEmissiveFactorLocation, 0.0f, 0.0f, 0.0f); // 自发光颜色
+            }
+            if (uEmissiveStrengthLocation >= 0) {
+                glUniform1f(uEmissiveStrengthLocation, 1.0f); // 自发光强度
+            }
+            if (uSpecularStrengthLocation >= 0) {
+                glUniform1f(uSpecularStrengthLocation, 1.0f); // 镜面反射强度
+            }
+            if (uSpecularColorFactorLocation >= 0) {
+                glUniform3f(uSpecularColorFactorLocation, 1.0f, 1.0f, 1.0f); // 镜面反射颜色
+            }
+            
+            // Set up vertex attributes
             glEnableVertexAttribArray(positionHandle);
+            glEnableVertexAttribArray(normalHandle);
+            glEnableVertexAttribArray(uv0Handle);
+            
             glBindBuffer(GL_ARRAY_BUFFER, vbo);
-            glVertexAttribPointer(positionHandle, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
+            glVertexAttribPointer(positionHandle, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (void*)0);
+            glVertexAttribPointer(normalHandle, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (void*)(3 * sizeof(GLfloat)));
+            glVertexAttribPointer(uv0Handle, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (void*)(6 * sizeof(GLfloat)));
+            
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-            glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_SHORT, (void*)0);
+            glDrawElements(GL_TRIANGLES, hoodIndexCount, GL_UNSIGNED_SHORT, (void*)0);
+            
             glDisableVertexAttribArray(positionHandle);
+            glDisableVertexAttribArray(normalHandle);
+            glDisableVertexAttribArray(uv0Handle);
         }
     }
 }

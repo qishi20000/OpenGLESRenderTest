@@ -15,6 +15,11 @@ public class TriangleRenderer implements GLSurfaceView.Renderer {
     public static native void surfaceCreated();
     public static native void surfaceChanged(int width, int height);
     public static native void drawFrame();
+    
+    // Touch event methods
+    public static native void onTouchDown(float x, float y);
+    public static native void onTouchMove(float x, float y);
+    public static native void onTouchUp();
 
     @Override
     public void onSurfaceCreated(GL10 gl, EGLConfig config) {

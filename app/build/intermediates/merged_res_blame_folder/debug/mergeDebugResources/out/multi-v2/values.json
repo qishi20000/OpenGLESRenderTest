@@ -1,56 +1,16 @@
 {
     "logs": [
         {
-            "outputFile": "/Users/qishi20000/.gradle/daemon/8.7/com.example.openglestriangle.app-mergeDebugResources-2:/values/values.xml",
-            "map": [
-                {
-                    "source": "/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/src/main/res/values/themes.xml",
-                    "from": {
-                        "startLines": "1",
-                        "startColumns": "4",
-                        "startOffsets": "16",
-                        "endColumns": "92",
-                        "endOffsets": "104"
-                    },
-                    "to": {
-                        "startLines": "3",
-                        "startColumns": "4",
-                        "startOffsets": "109",
-                        "endColumns": "92",
-                        "endOffsets": "197"
-                    }
-                },
-                {
-                    "source": "/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/src/main/res/values/strings.xml",
-                    "from": {
-                        "startLines": "2",
-                        "startColumns": "4",
-                        "startOffsets": "55",
-                        "endColumns": "53",
-                        "endOffsets": "104"
-                    }
-                }
-            ]
-        },
-        {
             "outputFile": "com.example.openglestriangle.app-mergeDebugResources-2:/values/values.xml",
             "map": [
                 {
-                    "source": "/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/src/main/res/values/colors.xml",
+                    "source": "C:\\Users\\qishi\\Documents\\Codes\\OpenGLESRenderTest\\app\\src\\main\\res\\values\\themes.xml",
                     "from": {
-                        "startLines": "2",
+                        "startLines": "1",
                         "startColumns": "4",
-                        "startOffsets": "55",
-                        "endColumns": "56",
-                        "endOffsets": "107"
-                    }
-                },
-                {
-                    "source": "/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/src/main/res/values/themes.xml",
-                    "from": {
-                        "startLines": "-1",
-                        "startColumns": "-1",
-                        "startOffsets": "-1"
+                        "startOffsets": "17",
+                        "endColumns": "92",
+                        "endOffsets": "105"
                     },
                     "to": {
                         "startLines": "4",
@@ -61,11 +21,30 @@
                     }
                 },
                 {
-                    "source": "/Users/qishi20000/Documents/Codes/AI/QweCodeTest/OpenGLESTriangle/app/src/main/res/values/strings.xml",
+                    "source": "C:\\Users\\qishi\\Documents\\Codes\\OpenGLESRenderTest\\app\\src\\main\\res\\values\\colors.xml",
                     "from": {
-                        "startLines": "-1",
-                        "startColumns": "-1",
-                        "startOffsets": "-1"
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "57",
+                        "endColumns": "56",
+                        "endOffsets": "109"
+                    },
+                    "to": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "56",
+                        "endOffsets": "107"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\qishi\\Documents\\Codes\\OpenGLESRenderTest\\app\\src\\main\\res\\values\\strings.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "57",
+                        "endColumns": "53",
+                        "endOffsets": "106"
                     },
                     "to": {
                         "startLines": "3",
