@@ -502,12 +502,22 @@ GLuint ibo = 0;
 GLsizei objIndexCount = 0;
 static OBJMesh g_objMesh;
 
-// 旋转相关变量
+// 旋转和缩放相关变量
 static float rotationX = 0.0f;
 static float rotationY = 0.0f;
+static float scale = 1.0f;
 static float lastTouchX = 0.0f;
 static float lastTouchY = 0.0f;
+static float lastDistance = 0.0f;
 static bool isTouching = false;
+static bool isTwoFinger = false;
+
+// 辅助函数
+static float calculateDistance(float x1, float y1, float x2, float y2) {
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    return sqrtf(dx * dx + dy * dy);
+}
 
 // 矩阵计算函数
 static void createIdentityMatrix(float* matrix) {
@@ -552,7 +562,7 @@ static void createRotationMatrix(float* matrix, float angleX, float angleY) {
         }
     }
 }
-
+//近大远小投影 
 static void createPerspectiveMatrix(float* matrix, float fov, float aspect, float near, float far) {
     float f = 1.0f / tanf(fov * 0.5f * M_PI / 180.0f);
     float rangeInv = 1.0f / (near - far);
@@ -564,6 +574,21 @@ static void createPerspectiveMatrix(float* matrix, float fov, float aspect, floa
     matrix[11] = -1.0f;
     matrix[14] = near * far * rangeInv * 2.0f;
     matrix[15] = 0.0f;
+}
+//正交投影
+static void createOrthographicMatrix(float* matrix, float left, float right, float bottom, float top, float near, float far) {
+    createIdentityMatrix(matrix);
+    
+    float rml = right - left;
+    float tmb = top - bottom;
+    float fmn = far - near;
+    
+    matrix[0] = 2.0f / rml;
+    matrix[5] = 2.0f / tmb;
+    matrix[10] = -2.0f / fmn;
+    matrix[12] = -(right + left) / rml;
+    matrix[13] = -(top + bottom) / tmb;
+    matrix[14] = -(far + near) / fmn;
 }
 
 static void createViewMatrix(float* matrix, float eyeX, float eyeY, float eyeZ, 
@@ -835,6 +860,7 @@ extern "C" {
         lastTouchX = x;
         lastTouchY = y;
         isTouching = true;
+        isTwoFinger = false;
         __android_log_print(ANDROID_LOG_INFO, TAG, "Touch down: %f, %f", x, y);
     }
     
@@ -862,7 +888,47 @@ extern "C" {
     JNIEXPORT void JNICALL
     Java_com_example_openglestriangle_TriangleRenderer_onTouchUp(JNIEnv *env, jclass clazz) {
         isTouching = false;
+        isTwoFinger = false;
         __android_log_print(ANDROID_LOG_INFO, TAG, "Touch up");
+    }
+    
+    // 双指触摸事件处理函数
+    JNIEXPORT void JNICALL
+    Java_com_example_openglestriangle_TriangleRenderer_onTwoFingerDown(JNIEnv *env, jclass clazz, jfloat x1, jfloat y1, jfloat x2, jfloat y2) {
+        lastTouchX = (x1 + x2) / 2.0f;
+        lastTouchY = (y1 + y2) / 2.0f;
+        lastDistance = calculateDistance(x1, y1, x2, y2);
+        isTouching = true;
+        isTwoFinger = true;
+        __android_log_print(ANDROID_LOG_INFO, TAG, "Two finger down: (%f,%f) (%f,%f), distance=%f", x1, y1, x2, y2, lastDistance);
+    }
+    
+    JNIEXPORT void JNICALL
+    Java_com_example_openglestriangle_TriangleRenderer_onTwoFingerMove(JNIEnv *env, jclass clazz, jfloat x1, jfloat y1, jfloat x2, jfloat y2) {
+        if (!isTouching || !isTwoFinger) return;
+        
+        float currentDistance = calculateDistance(x1, y1, x2, y2);
+        if (lastDistance > 0.0f) {
+            float scaleFactor = currentDistance / lastDistance;
+            scale *= scaleFactor;
+            
+            // 限制缩放范围
+            if (scale < 0.1f) scale = 0.1f;
+            if (scale > 10.0f) scale = 10.0f;
+            
+            __android_log_print(ANDROID_LOG_INFO, TAG, "Two finger move: scale=%f", scale);
+        }
+        
+        lastDistance = currentDistance;
+        lastTouchX = (x1 + x2) / 2.0f;
+        lastTouchY = (y1 + y2) / 2.0f;
+    }
+    
+    JNIEXPORT void JNICALL
+    Java_com_example_openglestriangle_TriangleRenderer_onTwoFingerUp(JNIEnv *env, jclass clazz) {
+        isTouching = false;
+        isTwoFinger = false;
+        __android_log_print(ANDROID_LOG_INFO, TAG, "Two finger up");
     }
 
     JNIEXPORT void JNICALL
@@ -960,12 +1026,14 @@ extern "C" {
             // 创建模型矩阵（先缩放，再旋转，确保围绕中心点旋转）
             createIdentityMatrix(modelMatrix);
             
-            // 1. 先应用缩放
+            // 1. 先应用缩放（基础缩放 + 用户缩放）
+            float baseScale = 20.0f;
+            float totalScale = baseScale * scale;
             float scaleMatrix[16];
             createIdentityMatrix(scaleMatrix);
-            scaleMatrix[0] = 20.0f;  // X轴缩放
-            scaleMatrix[5] = 20.0f;  // Y轴缩放
-            scaleMatrix[10] = 20.0f; // Z轴缩放
+            scaleMatrix[0] = totalScale;  // X轴缩放
+            scaleMatrix[5] = totalScale;  // Y轴缩放
+            scaleMatrix[10] = totalScale; // Z轴缩放
             
             // 2. 再应用旋转
             float rotationMatrix[16];
@@ -986,11 +1054,12 @@ extern "C" {
             // 创建视图矩阵 - 调整相机位置使模型更大
             createViewMatrix(viewMatrix, 0.0f, 0.0f, 1.5f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
             
-            // 创建投影矩阵 - 调整FOV和近远平面使模型更大
+            // 创建正交投影矩阵 - 消除近大远小的透视效果
             static float aspect = 1.0f;
             static int lastWidth = 0, lastHeight = 0;
-            // 增大FOV，调整近远平面
-            createPerspectiveMatrix(projectionMatrix, 60.0f, 1.0f, 0.01f, 10.0f);
+            // 使用正交投影，设置合适的视口范围
+            createOrthographicMatrix(projectionMatrix, -2.0f, 2.0f, -2.0f, 2.0f, 0.01f, 10.0f);
+
             
             // 设置矩阵uniform
             if (uModelMatrixLocation >= 0) {
