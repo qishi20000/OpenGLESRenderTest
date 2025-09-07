@@ -994,7 +994,12 @@ extern "C" {
     Java_com_example_openglestriangle_TriangleRenderer_surfaceCreated(JNIEnv *env, jclass clazz) {
         __android_log_print(ANDROID_LOG_INFO, TAG, "Surface created");
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // 设置背景色为黑色
+        
+        // 启用深度测试
         glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS); // 默认深度函数：只绘制更近的像素
+        glDepthMask(GL_TRUE); // 启用深度写入
+        glDepthRangef(-1.0f, 1.0f); // 设置深度范围（0.0为最近，1.0为最远）
     }
 
     JNIEXPORT void JNICALL
@@ -1011,6 +1016,11 @@ extern "C" {
 
     JNIEXPORT void JNICALL
     Java_com_example_openglestriangle_TriangleRenderer_drawFrame(JNIEnv *env, jclass clazz) {
+        // 确保深度测试启用
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (program) {
             glUseProgram(program);
