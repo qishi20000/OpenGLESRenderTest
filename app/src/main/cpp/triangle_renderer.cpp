@@ -1095,13 +1095,13 @@ extern "C" {
             
             // 设置材质参数（改进的材质设置）
             if (uBaseColorFactorLocation >= 0) {
-                glUniform4f(uBaseColorFactorLocation, 0.6f, 0.6f, 0.6f, 1.0f); // 适中的灰白色
+                glUniform4f(uBaseColorFactorLocation, 0.60533f, 0.60533f, 0.60533f, 1.0f); // 适中的灰白色
             }
             if (uMetallicFactorLocation >= 0) {
-                glUniform1f(uMetallicFactorLocation, 0.3f); // 增加金属感以获得更好的反射
+                glUniform1f(uMetallicFactorLocation, 0.15695f); // 增加金属感以获得更好的反射
             }
             if (uRoughnessFactorLocation >= 0) {
-                glUniform1f(uRoughnessFactorLocation, 0.2f); // 稍微降低粗糙度以获得更清晰的高光
+                glUniform1f(uRoughnessFactorLocation, 0.1021f); // 稍微降低粗糙度以获得更清晰的高光
             }
             if (uNormalScaleLocation >= 0) {
                 glUniform1f(uNormalScaleLocation, 1.0f); // 法线强度
