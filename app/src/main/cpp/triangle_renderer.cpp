@@ -619,31 +619,26 @@ static const char* fragmentShaderCode = R"(
           float diffuseBRDF = diffuse(roughness, NoV, NoL, LoH); // 使用Lambert
           vec3 Fd = diffuseColor * diffuseBRDF;
           
-          // 能量守恒（按照 Filament 标准）
-          vec3 kS = F;
-          vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
-          Fd *= kD;
-          
           // 计算 DFG 项（用于能量补偿和 IBL）
           vec3 dfg = prefilteredDFG(perceptualRoughness, NoV);
           
           // 能量补偿（Filament 的多散射补偿，与fs.glsl完全一致）
           vec3 energyCompensation = 1.0 + f0 * (1.0 / dfg.y - 1.0);
-          specular *= energyCompensation;
+          vec3 Fr = specular * energyCompensation;
           
           // 直接光照（与fs.glsl的surfaceShading函数一致）
           vec3 lightColor = uLightColorIntensity.rgb;
           float lightIntensity = uLightColorIntensity.a;
           vec3 radiance = lightColor * lightIntensity;
           
-          // 按照fs.glsl的surfaceShading函数计算
-          vec3 color = Fd + specular;
+          // 按照fs.glsl的surfaceShading函数计算（第1876行）
+          vec3 color = Fd + Fr;
           vec3 directLighting = (color * radiance) * NoL;
           
           // IBL 计算（与fs.glsl的evaluateIBL函数一致）
           vec3 E = specularDFG(f0, dfg);
           
-          // 漫反射 IBL（与fs.glsl一致）
+          // 漫反射 IBL（与fs.glsl的evaluateIBL函数一致，第2783行）
           vec3 diffuseIrradiance = diffuseIrradiance(N);
           vec3 Fd_IBL = diffuseColor * diffuseIrradiance * (1.0 - E) * diffuseBRDF;
           
@@ -660,6 +655,9 @@ static const char* fragmentShaderCode = R"(
           
           // 添加自发光（与fs.glsl一致）
           finalColor += emissive;
+          
+          // 调试输出：显示各个分量的贡献
+          // finalColor = vec3(length(Fd_IBL), length(Fr_IBL), length(directLighting)); // 调试用
           
           // 调试：确保颜色不为零
           if (length(finalColor) < 0.01) {
@@ -1367,15 +1365,15 @@ extern "C" {
                 glUniform4f(uLightColorIntensityLocation, 1.0f, 1.0f, 1.0f, 2.0f); // 降低光照强度
             }
             
-            // 设置材质参数（改进的材质设置）
+            // 设置材质参数（平衡反射和亮度）
             if (uBaseColorFactorLocation >= 0) {
-                glUniform4f(uBaseColorFactorLocation, 0.1f, 0.1f, 0.1f, 1.0f); // 适中的灰白色
+                glUniform4f(uBaseColorFactorLocation, 0.9f, 0.9f, 0.9f, 1.0f); // 更明亮的灰白色
             }
             if (uMetallicFactorLocation >= 0) {
-                glUniform1f(uMetallicFactorLocation, 0.15695f); // 增加金属感以获得更好的反射
+                glUniform1f(uMetallicFactorLocation, 0.0f); // 非金属材质，减少反射
             }
             if (uRoughnessFactorLocation >= 0) {
-                glUniform1f(uRoughnessFactorLocation, 0.1021f); // 稍微降低粗糙度以获得更清晰的高光
+                glUniform1f(uRoughnessFactorLocation, 0.6f); // 中等粗糙度，减少镜面反射但保持一定光泽
             }
             if (uNormalScaleLocation >= 0) {
                 glUniform1f(uNormalScaleLocation, 1.0f); // 法线强度
@@ -1390,7 +1388,7 @@ extern "C" {
                 glUniform1f(uEmissiveStrengthLocation, 1.0f); // 自发光强度
             }
             if (uSpecularStrengthLocation >= 0) {
-                glUniform1f(uSpecularStrengthLocation, 1.0f); // 镜面反射强度
+                glUniform1f(uSpecularStrengthLocation, 0.3f); // 适中的镜面反射强度
             }
             if (uSpecularColorFactorLocation >= 0) {
                 glUniform3f(uSpecularColorFactorLocation, 1.0f, 1.0f, 1.0f); // 镜面反射颜色
