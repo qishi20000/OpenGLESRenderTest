@@ -957,17 +957,36 @@ extern "C" {
             float projectionMatrix[16];
             float mvpMatrix[16];
             
-            // 创建模型矩阵（旋转）
+            // 创建模型矩阵（旋转 + 缩放）
             createRotationMatrix(modelMatrix, rotationX, rotationY);
             
-            // 创建视图矩阵
-            createViewMatrix(viewMatrix, 0.0f, 0.0f, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+            // 添加缩放矩阵使模型更大
+            float scaleMatrix[16];
+            createIdentityMatrix(scaleMatrix);
+            scaleMatrix[0] = 20.0f;  // X轴缩放
+            scaleMatrix[5] = 20.0f;  // Y轴缩放
+            scaleMatrix[10] = 20.0f; // Z轴缩放
             
-            // 创建投影矩阵 - 使用正确的宽高比
+            // 组合旋转和缩放矩阵
+            float tempMatrix[16];
+            for (int i = 0; i < 4; i++) {
+                for (int j = 0; j < 4; j++) {
+                    tempMatrix[i * 4 + j] = 0.0f;
+                    for (int k = 0; k < 4; k++) {
+                        tempMatrix[i * 4 + j] += modelMatrix[i * 4 + k] * scaleMatrix[k * 4 + j];
+                    }
+                }
+            }
+            memcpy(modelMatrix, tempMatrix, 16 * sizeof(float));
+            
+            // 创建视图矩阵 - 调整相机位置使模型更大
+            createViewMatrix(viewMatrix, 0.0f, 0.0f, 1.5f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+            
+            // 创建投影矩阵 - 调整FOV和近远平面使模型更大
             static float aspect = 1.0f;
             static int lastWidth = 0, lastHeight = 0;
-            // 这里简化处理，使用1:1宽高比避免形变
-            createPerspectiveMatrix(projectionMatrix, 45.0f, 1.0f, 0.1f, 100.0f);
+            // 增大FOV，调整近远平面
+            createPerspectiveMatrix(projectionMatrix, 60.0f, 1.0f, 0.01f, 10.0f);
             
             // 设置矩阵uniform
             if (uModelMatrixLocation >= 0) {
@@ -982,7 +1001,7 @@ extern "C" {
             
             // 设置光照参数 - 调整以获得更好的明暗对比
             if (uCameraPositionLocation >= 0) {
-                glUniform3f(uCameraPositionLocation, 0.0f, 0.0f, 2.5f); // 稍微靠近一点
+                glUniform3f(uCameraPositionLocation, 0.0f, 0.0f, 1.5f); // 与视图矩阵保持一致
             }
             if (uLightDirectionLocation >= 0) {
                 glUniform3f(uLightDirectionLocation, 0.3f, 0.8f, -0.5f); // 调整光照方向以获得更好的阴影
