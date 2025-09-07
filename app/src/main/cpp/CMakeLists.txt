@@ -24,4 +24,5 @@ find_library(
 target_link_libraries(
     triangle_renderer
     ${log-lib}
-    ${GLESv3-lib})
+    ${GLESv3-lib}
+    android)

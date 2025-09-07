@@ -11,6 +11,7 @@ public class TriangleRenderer implements GLSurfaceView.Renderer {
     }
 
     // Native methods
+    public static native void initAssetManager(android.content.res.AssetManager assetManager);
     public static native void init();
     public static native void surfaceCreated();
     public static native void surfaceChanged(int width, int height);

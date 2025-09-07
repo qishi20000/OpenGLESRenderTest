@@ -51,6 +51,10 @@ public class MainActivity extends Activity {
         if (supportsEs3) {
             mGLSurfaceView = new CustomGLSurfaceView(this);
             mGLSurfaceView.setEGLContextClientVersion(3); // 使用OpenGL ES 3.0
+            
+            // 初始化Asset Manager
+            TriangleRenderer.initAssetManager(getAssets());
+            
             mGLSurfaceView.setRenderer(new TriangleRenderer());
             setContentView(mGLSurfaceView);
         } else {

@@ -5,8 +5,179 @@
 #include <stdlib.h>  // 添加此头文件以使用malloc和free
 #include <math.h>
 #include <string.h>  // 添加此头文件以使用memcpy
+#include <android/asset_manager.h>
+#include <android/asset_manager_jni.h>
+#include <vector>
+#include <string>
+#include <fstream>
+#include <sstream>
 
 static const char* TAG = "OpenGLESTriangle";
+
+// OBJ加载器结构体
+struct Vertex {
+    float x, y, z;
+    float nx, ny, nz;
+    float u, v;
+};
+
+struct OBJMesh {
+    std::vector<Vertex> vertices;
+    std::vector<unsigned short> indices;
+    int vertexCount;
+    int indexCount;
+};
+
+// Asset Manager
+static AAssetManager* g_assetManager = nullptr;
+
+// OBJ文件加载函数
+static std::string readAssetFile(const char* filename) {
+    if (!g_assetManager) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "Asset manager not initialized");
+        return "";
+    }
+    
+    AAsset* asset = AAssetManager_open(g_assetManager, filename, AASSET_MODE_BUFFER);
+    if (!asset) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "Failed to open asset: %s", filename);
+        return "";
+    }
+    
+    size_t length = AAsset_getLength(asset);
+    char* buffer = (char*)malloc(length + 1);
+    AAsset_read(asset, buffer, length);
+    AAsset_close(asset);
+    
+    buffer[length] = '\0';
+    std::string content(buffer);
+    free(buffer);
+    
+    return content;
+}
+
+static OBJMesh loadOBJFile(const char* filename) {
+    OBJMesh mesh;
+    std::string content = readAssetFile(filename);
+    
+    if (content.empty()) {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "Failed to read OBJ file: %s", filename);
+        return mesh;
+    }
+    
+    std::vector<float> positions, normals, texCoords;
+    std::vector<std::string> faces;
+    
+    std::istringstream stream(content);
+    std::string line;
+    
+    while (std::getline(stream, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        
+        std::istringstream lineStream(line);
+        std::string type;
+        lineStream >> type;
+        
+        if (type == "v") {
+            // 顶点位置
+            float x, y, z;
+            lineStream >> x >> y >> z;
+            positions.push_back(x);
+            positions.push_back(y);
+            positions.push_back(z);
+        }
+        else if (type == "vn") {
+            // 法线
+            float nx, ny, nz;
+            lineStream >> nx >> ny >> nz;
+            normals.push_back(nx);
+            normals.push_back(ny);
+            normals.push_back(nz);
+        }
+        else if (type == "vt") {
+            // 纹理坐标
+            float u, v;
+            lineStream >> u >> v;
+            texCoords.push_back(u);
+            texCoords.push_back(v);
+        }
+        else if (type == "f") {
+            // 面
+            faces.push_back(line);
+        }
+    }
+    
+    // 处理面数据
+    for (const auto& face : faces) {
+        std::istringstream faceStream(face);
+        std::string token;
+        faceStream >> token; // 跳过 "f"
+        
+        std::vector<int> vIndices, vtIndices, vnIndices;
+        
+        while (faceStream >> token) {
+            std::istringstream tokenStream(token);
+            std::string v, vt, vn;
+            
+            std::getline(tokenStream, v, '/');
+            std::getline(tokenStream, vt, '/');
+            std::getline(tokenStream, vn, '/');
+            
+            if (!v.empty()) vIndices.push_back(std::stoi(v) - 1);
+            if (!vt.empty()) vtIndices.push_back(std::stoi(vt) - 1);
+            if (!vn.empty()) vnIndices.push_back(std::stoi(vn) - 1);
+        }
+        
+        // 创建三角形（假设是三角形面）
+        if (vIndices.size() >= 3) {
+            for (int i = 1; i < vIndices.size() - 1; i++) {
+                // 添加三个顶点
+                for (int j = 0; j < 3; j++) {
+                    int idx = (j == 0) ? 0 : (j == 1) ? i : i + 1;
+                    if (idx < vIndices.size()) {
+                        Vertex vertex;
+                        
+                        // 位置
+                        int posIdx = vIndices[idx] * 3;
+                        vertex.x = positions[posIdx];
+                        vertex.y = positions[posIdx + 1];
+                        vertex.z = positions[posIdx + 2];
+                        
+                        // 法线
+                        if (vnIndices.size() > idx) {
+                            int normIdx = vnIndices[idx] * 3;
+                            vertex.nx = normals[normIdx];
+                            vertex.ny = normals[normIdx + 1];
+                            vertex.nz = normals[normIdx + 2];
+                        } else {
+                            vertex.nx = 0; vertex.ny = 0; vertex.nz = 1;
+                        }
+                        
+                        // 纹理坐标
+                        if (vtIndices.size() > idx) {
+                            int texIdx = vtIndices[idx] * 2;
+                            vertex.u = texCoords[texIdx];
+                            vertex.v = texCoords[texIdx + 1];
+                        } else {
+                            vertex.u = 0; vertex.v = 0;
+                        }
+                        
+                        mesh.vertices.push_back(vertex);
+                        mesh.indices.push_back(mesh.vertices.size() - 1);
+                    }
+                }
+            }
+        }
+    }
+    
+    mesh.vertexCount = mesh.vertices.size();
+    mesh.indexCount = mesh.indices.size();
+    
+    __android_log_print(ANDROID_LOG_INFO, TAG, "Loaded OBJ: %d vertices, %d indices", 
+                       mesh.vertexCount, mesh.indexCount);
+    
+    return mesh;
+}
 
 // Shader sources
 static const char* vertexShaderCode = R"(
@@ -328,7 +499,8 @@ static GLint uOcclusionMapLocation = -1;
 
 GLuint vbo = 0;
 GLuint ibo = 0;
-GLsizei hoodIndexCount = 0;
+GLsizei objIndexCount = 0;
+static OBJMesh g_objMesh;
 
 // 旋转相关变量
 static float rotationX = 0.0f;
@@ -346,23 +518,39 @@ static void createIdentityMatrix(float* matrix) {
 static void createRotationMatrix(float* matrix, float angleX, float angleY) {
     createIdentityMatrix(matrix);
     
-    // 绕X轴旋转
+    // 绕X轴旋转矩阵
     float cosX = cosf(angleX);
     float sinX = sinf(angleX);
     
-    // 绕Y轴旋转
+    // 绕Y轴旋转矩阵
     float cosY = cosf(angleY);
     float sinY = sinf(angleY);
     
-    // 组合旋转矩阵 (Y * X)
-    matrix[0] = cosY;
-    matrix[2] = sinY;
-    matrix[5] = cosX * cosY;
-    matrix[6] = -sinX;
-    matrix[7] = cosX * sinY;
-    matrix[8] = sinX * cosY;
-    matrix[9] = cosX;
-    matrix[10] = sinX * sinY;
+    // 创建X轴旋转矩阵
+    float rotX[16];
+    createIdentityMatrix(rotX);
+    rotX[5] = cosX;
+    rotX[6] = -sinX;
+    rotX[9] = sinX;
+    rotX[10] = cosX;
+    
+    // 创建Y轴旋转矩阵
+    float rotY[16];
+    createIdentityMatrix(rotY);
+    rotY[0] = cosY;
+    rotY[2] = sinY;
+    rotY[8] = -sinY;
+    rotY[10] = cosY;
+    
+    // 矩阵乘法：result = rotY * rotX
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            matrix[i * 4 + j] = 0.0f;
+            for (int k = 0; k < 4; k++) {
+                matrix[i * 4 + j] += rotY[i * 4 + k] * rotX[k * 4 + j];
+            }
+        }
+    }
 }
 
 static void createPerspectiveMatrix(float* matrix, float fov, float aspect, float near, float far) {
@@ -633,6 +821,14 @@ static void createProgram() {
 }
 
 extern "C" {
+    // Asset Manager 初始化
+    JNIEXPORT void JNICALL
+    Java_com_example_openglestriangle_TriangleRenderer_initAssetManager(JNIEnv *env, jclass clazz, jobject assetManager) {
+        g_assetManager = AAssetManager_fromJava(env, assetManager);
+        __android_log_print(ANDROID_LOG_INFO, TAG, "Asset manager initialized");
+    }
+    
+    
     // 触摸事件处理函数
     JNIEXPORT void JNICALL
     Java_com_example_openglestriangle_TriangleRenderer_onTouchDown(JNIEnv *env, jclass clazz, jfloat x, jfloat y) {
@@ -649,9 +845,9 @@ extern "C" {
         float deltaX = x - lastTouchX;
         float deltaY = y - lastTouchY;
         
-        // 根据滑动距离更新旋转角度
-        rotationY += deltaX * 0.01f; // 水平滑动控制Y轴旋转
-        rotationX += deltaY * 0.01f; // 垂直滑动控制X轴旋转
+        // 根据滑动距离更新旋转角度 - 调整灵敏度
+        rotationY += deltaX * 0.005f; // 水平滑动控制Y轴旋转，降低灵敏度
+        rotationX += deltaY * 0.005f; // 垂直滑动控制X轴旋转，降低灵敏度
         
         // 限制X轴旋转角度
         if (rotationX > M_PI / 2) rotationX = M_PI / 2;
@@ -673,26 +869,58 @@ extern "C" {
     Java_com_example_openglestriangle_TriangleRenderer_init(JNIEnv *env, jclass clazz) {
         __android_log_print(ANDROID_LOG_INFO, TAG, "Initializing TriangleRenderer");
         createProgram();
-        // 创建引擎盖网格并上传到GPU
+        
+        // 检查Asset Manager是否已初始化
+        if (!g_assetManager) {
+            __android_log_print(ANDROID_LOG_ERROR, TAG, "Asset Manager not initialized! Call initAssetManager first.");
+            return;
+        }
+        
+        // 加载OBJ文件
         if (vbo == 0 || ibo == 0) {
-            GLfloat *vertices = NULL;
-            GLushort *indices = NULL;
-            int vertexCount = 0;
-            int indexCount = 0;
-            generateHoodMesh(1.4f, 2.0f, 0.3f, 50, 50, &vertices, &indices, &vertexCount, &indexCount);
+            g_objMesh = loadOBJFile("mesh.obj"); // 假设OBJ文件名为model.obj
+            
+            if (g_objMesh.vertexCount > 0) {
+                // 创建顶点数据数组
+                GLfloat *vertices = (GLfloat*)malloc(sizeof(GLfloat) * g_objMesh.vertexCount * 8);
+                GLushort *indices = (GLushort*)malloc(sizeof(GLushort) * g_objMesh.indexCount);
+                
+                // 填充顶点数据
+                for (int i = 0; i < g_objMesh.vertexCount; i++) {
+                    int baseIdx = i * 8;
+                    vertices[baseIdx + 0] = g_objMesh.vertices[i].x;
+                    vertices[baseIdx + 1] = g_objMesh.vertices[i].y;
+                    vertices[baseIdx + 2] = g_objMesh.vertices[i].z;
+                    vertices[baseIdx + 3] = g_objMesh.vertices[i].nx;
+                    vertices[baseIdx + 4] = g_objMesh.vertices[i].ny;
+                    vertices[baseIdx + 5] = g_objMesh.vertices[i].nz;
+                    vertices[baseIdx + 6] = g_objMesh.vertices[i].u;
+                    vertices[baseIdx + 7] = g_objMesh.vertices[i].v;
+                }
+                
+                // 填充索引数据
+                for (int i = 0; i < g_objMesh.indexCount; i++) {
+                    indices[i] = g_objMesh.indices[i];
+                }
+                
+                if (vbo == 0) glGenBuffers(1, &vbo);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * g_objMesh.vertexCount * 8, vertices, GL_STATIC_DRAW);
 
-            if (vbo == 0) glGenBuffers(1, &vbo);
-            glBindBuffer(GL_ARRAY_BUFFER, vbo);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * vertexCount * 8, vertices, GL_STATIC_DRAW);
+                if (ibo == 0) glGenBuffers(1, &ibo);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLushort) * g_objMesh.indexCount, indices, GL_STATIC_DRAW);
 
-            if (ibo == 0) glGenBuffers(1, &ibo);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLushort) * indexCount, indices, GL_STATIC_DRAW);
+                objIndexCount = (GLsizei)g_objMesh.indexCount;
 
-            hoodIndexCount = (GLsizei)indexCount;
-
-            if (vertices) free(vertices);
-            if (indices) free(indices);
+                free(vertices);
+                free(indices);
+                
+                __android_log_print(ANDROID_LOG_INFO, TAG, "OBJ mesh loaded successfully");
+            } else {
+                __android_log_print(ANDROID_LOG_ERROR, TAG, "Failed to load OBJ mesh, using fallback");
+                // 如果OBJ加载失败，可以在这里添加fallback逻辑
+            }
         }
     }
 
@@ -706,7 +934,13 @@ extern "C" {
     JNIEXPORT void JNICALL
     Java_com_example_openglestriangle_TriangleRenderer_surfaceChanged(JNIEnv *env, jclass clazz, jint width, jint height) {
         __android_log_print(ANDROID_LOG_INFO, TAG, "Surface changed: %d x %d", width, height);
-        glViewport(0, 0, width, height);
+        glViewport(0, 500, width, width);
+        
+        // 存储屏幕尺寸用于投影矩阵计算
+        static int screenWidth = width;
+        static int screenHeight = height;
+        screenWidth = width;
+        screenHeight = height;
     }
 
     JNIEXPORT void JNICALL
@@ -729,7 +963,10 @@ extern "C" {
             // 创建视图矩阵
             createViewMatrix(viewMatrix, 0.0f, 0.0f, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
             
-            // 创建投影矩阵
+            // 创建投影矩阵 - 使用正确的宽高比
+            static float aspect = 1.0f;
+            static int lastWidth = 0, lastHeight = 0;
+            // 这里简化处理，使用1:1宽高比避免形变
             createPerspectiveMatrix(projectionMatrix, 45.0f, 1.0f, 0.1f, 100.0f);
             
             // 设置矩阵uniform
@@ -794,7 +1031,7 @@ extern "C" {
             glVertexAttribPointer(uv0Handle, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (void*)(6 * sizeof(GLfloat)));
             
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-            glDrawElements(GL_TRIANGLES, hoodIndexCount, GL_UNSIGNED_SHORT, (void*)0);
+            glDrawElements(GL_TRIANGLES, objIndexCount, GL_UNSIGNED_SHORT, (void*)0);
             
             glDisableVertexAttribArray(positionHandle);
             glDisableVertexAttribArray(normalHandle);
